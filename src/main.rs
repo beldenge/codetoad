@@ -14,12 +14,17 @@ use crate::settings::SettingsManager;
 use crate::tools::execute_bash_command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use crossterm::event::DisableMouseCapture;
+use crossterm::execute;
+use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    recover_terminal_state();
     let cli = Cli::parse();
 
     if let Some(directory) = cli.directory.as_ref() {
@@ -93,6 +98,13 @@ async fn main() -> Result<()> {
     } else {
         inline_ui::run_inline(agent, settings, initial_message).await
     }
+}
+
+fn recover_terminal_state() {
+    // Best-effort cleanup if a previous TUI session exited unexpectedly.
+    let _ = disable_raw_mode();
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
 }
 
 async fn headless_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {

@@ -2,6 +2,9 @@ use crate::agent::{Agent, AgentEvent, ToolCallSummary};
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
+use crossterm::event::DisableMouseCapture;
+use crossterm::execute;
+use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -16,6 +19,7 @@ pub async fn run_inline(
     settings: Arc<Mutex<SettingsManager>>,
     initial_message: Option<String>,
 ) -> Result<()> {
+    recover_terminal_state();
     print_logo_and_tips();
 
     if let Some(initial) = initial_message {
@@ -42,6 +46,12 @@ pub async fn run_inline(
     }
 
     Ok(())
+}
+
+fn recover_terminal_state() {
+    let _ = disable_raw_mode();
+    let mut stdout = io::stdout();
+    let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
 }
 
 async fn handle_input(
