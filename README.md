@@ -35,6 +35,7 @@ Implemented now:
 Not yet implemented:
 - MCP server integration
 - Morph fast-apply tool
+- xAI Agent Tools web-search integration (legacy live-search parameters are intentionally disabled)
 - Ink-specific visual parity details from the TypeScript UI
 
 ## Build

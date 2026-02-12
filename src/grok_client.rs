@@ -700,7 +700,8 @@ struct ResponsesPayload {
     temperature: f32,
     max_output_tokens: u32,
     stream: bool,
-    search_parameters: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_parameters: Option<Value>,
 }
 
 impl ResponsesPayload {
@@ -710,7 +711,7 @@ impl ResponsesPayload {
         tools: Vec<Value>,
         stream: bool,
         max_tokens: u32,
-        search_mode: SearchMode,
+        _search_mode: SearchMode,
     ) -> Self {
         let tool_choice = if tools.is_empty() {
             None
@@ -726,7 +727,9 @@ impl ResponsesPayload {
             temperature: 0.7,
             max_output_tokens: max_tokens,
             stream,
-            search_parameters: json!({ "mode": search_mode.as_str() }),
+            // xAI Responses API no longer supports legacy live-search parameters.
+            // Keep this unset to avoid deprecated search path errors (HTTP 410).
+            search_parameters: None,
         }
     }
 }
