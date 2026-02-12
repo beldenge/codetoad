@@ -17,6 +17,13 @@ use tokio_util::sync::CancellationToken;
 const DIRECT_COMMANDS: &[&str] = &[
     "ls", "pwd", "cd", "cat", "mkdir", "touch", "echo", "grep", "find", "cp", "mv", "rm",
 ];
+const SLASH_COMMANDS: &[&str] = &[
+    "/help",
+    "/clear",
+    "/models",
+    "/commit-and-push",
+    "/exit",
+];
 const STATUS_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 
 pub async fn run_inline(
@@ -188,10 +195,20 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
         let event = tokio::select! {
             _ = status_tick.tick(), if !started_content => {
                 let elapsed = started_at.elapsed().as_secs();
+                let progress = if phase == "running tools" && tool_calls_seen > 0 {
+                    format!(
+                        " ({}/{})",
+                        tool_results_seen.min(tool_calls_seen),
+                        tool_calls_seen
+                    )
+                } else {
+                    String::new()
+                };
                 let status = format!(
-                    "{} {}... {}s",
+                    "{} {}{}... {}s",
                     STATUS_FRAMES[frame_idx % STATUS_FRAMES.len()],
                     phase,
+                    progress,
                     elapsed
                 );
                 frame_idx = frame_idx.wrapping_add(1);
@@ -434,7 +451,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInput controls:\n  Up/Down       History\n  Left/Right    Move cursor\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInput controls:\n  Up/Down       History\n  Left/Right    Move cursor\n  Tab           Slash-command completion\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
@@ -466,6 +483,9 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
     let mut cursor = 0usize;
     let mut history_idx: Option<usize> = None;
     let mut ctrl_c_armed = false;
+    let mut completion_prefix = String::new();
+    let mut completion_matches: Vec<&'static str> = Vec::new();
+    let mut completion_index = 0usize;
     render_input_line(&input, cursor)?;
 
     loop {
@@ -499,6 +519,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     cursor = 0;
                     history_idx = None;
                     ctrl_c_armed = false;
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
                 }
             }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -512,6 +533,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     let next = next_boundary(&input, cursor);
                     input.drain(cursor..next);
                     ctrl_c_armed = false;
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
                 }
             }
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -527,6 +549,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                 cursor = 0;
                 history_idx = None;
                 ctrl_c_armed = false;
+                reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
             }
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let start = previous_word_start(&input, cursor);
@@ -534,6 +557,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                 cursor = start;
                 history_idx = None;
                 ctrl_c_armed = false;
+                reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
             }
             KeyCode::Left => {
                 cursor = prev_boundary(&input, cursor);
@@ -557,6 +581,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     input.drain(prev..cursor);
                     cursor = prev;
                     history_idx = None;
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
                 }
                 ctrl_c_armed = false;
             }
@@ -565,6 +590,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     let next = next_boundary(&input, cursor);
                     input.drain(cursor..next);
                     history_idx = None;
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
                 }
                 ctrl_c_armed = false;
             }
@@ -576,6 +602,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     history_idx = Some(next);
                     input = history[next].clone();
                     cursor = input.len();
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
                 }
                 ctrl_c_armed = false;
             }
@@ -595,6 +622,25 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                             cursor = input.len();
                         }
                     }
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                }
+                ctrl_c_armed = false;
+            }
+            KeyCode::Tab => {
+                if input.starts_with('/') {
+                    let prefix = input.trim();
+                    if completion_matches.is_empty() || completion_prefix != prefix {
+                        completion_matches = slash_matches(prefix);
+                        completion_index = 0;
+                        completion_prefix = prefix.to_string();
+                    } else if !completion_matches.is_empty() {
+                        completion_index = (completion_index + 1) % completion_matches.len();
+                    }
+
+                    if let Some(selected) = completion_matches.get(completion_index) {
+                        input = format!("{selected} ");
+                        cursor = input.len();
+                    }
                 }
                 ctrl_c_armed = false;
             }
@@ -606,6 +652,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     cursor += ch.len_utf8();
                     history_idx = None;
                     ctrl_c_armed = false;
+                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
                 }
             }
             _ => {
@@ -684,4 +731,22 @@ fn previous_word_start(input: &str, cursor: usize) -> usize {
     }
 
     index
+}
+
+fn slash_matches(prefix: &str) -> Vec<&'static str> {
+    SLASH_COMMANDS
+        .iter()
+        .copied()
+        .filter(|cmd| cmd.starts_with(prefix))
+        .collect()
+}
+
+fn reset_completion(
+    prefix: &mut String,
+    matches: &mut Vec<&'static str>,
+    index: &mut usize,
+) {
+    prefix.clear();
+    matches.clear();
+    *index = 0;
 }

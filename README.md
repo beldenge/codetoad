@@ -24,6 +24,7 @@ Implemented now:
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
 - Inline mode shows a live spinner + elapsed seconds during thinking/tool execution and a completion duration summary
 - Inline prompt supports rich key controls (history, cursor movement, word/line deletion)
+- Inline prompt supports slash-command completion with `Tab`
 - Ctrl+C in prompt clears input first; pressing Ctrl+C again on empty input exits
 - Native terminal scrollback remains visible after exit/Ctrl+C
 - Tool-calling agent loop with max tool rounds
