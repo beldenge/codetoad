@@ -8,6 +8,7 @@ use crossterm::style::Stylize;
 use crossterm::terminal::disable_raw_mode;
 use std::io::{self, Write};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
@@ -15,6 +16,7 @@ use tokio_util::sync::CancellationToken;
 const DIRECT_COMMANDS: &[&str] = &[
     "ls", "pwd", "cd", "cat", "mkdir", "touch", "echo", "grep", "find", "cp", "mv", "rm",
 ];
+const STATUS_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 
 pub async fn run_inline(
     agent: Arc<Mutex<Agent>>,
@@ -171,14 +173,26 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     });
 
     let mut started_content = false;
-    let mut thinking_shown = false;
-    let mut thinking_tick = time::interval(Duration::from_millis(650));
+    let mut phase = "thinking";
+    let mut tool_calls_seen = 0usize;
+    let mut tool_results_seen = 0usize;
+    let mut frame_idx = 0usize;
+    let mut status_width = 0usize;
+    let started_at = Instant::now();
+    let mut status_tick = time::interval(Duration::from_millis(120));
 
     loop {
         let event = tokio::select! {
-            _ = thinking_tick.tick(), if !started_content && !thinking_shown => {
-                println!("{}", "● thinking...".dark_grey());
-                thinking_shown = true;
+            _ = status_tick.tick(), if !started_content => {
+                let elapsed = started_at.elapsed().as_secs();
+                let status = format!(
+                    "{} {}... {}s",
+                    STATUS_FRAMES[frame_idx % STATUS_FRAMES.len()],
+                    phase,
+                    elapsed
+                );
+                frame_idx = frame_idx.wrapping_add(1);
+                render_status_line(&status, &mut status_width)?;
                 continue;
             }
             maybe_event = agent_rx.recv() => maybe_event,
@@ -191,6 +205,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
         match event {
             AgentEvent::Content(chunk) => {
                 if !started_content {
+                    clear_status_line(&mut status_width)?;
                     print!("{} ", "●".white());
                     started_content = true;
                 }
@@ -202,6 +217,9 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                     println!();
                     started_content = false;
                 }
+                phase = "running tools";
+                tool_calls_seen += calls.len();
+                clear_status_line(&mut status_width)?;
                 for call in calls {
                     println!(
                         "{} {}",
@@ -216,12 +234,32 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                     println!();
                     started_content = false;
                 }
+                tool_results_seen = tool_results_seen.saturating_add(1);
+                phase = if tool_calls_seen == 0 {
+                    "running tools"
+                } else if tool_results_seen >= tool_calls_seen {
+                    "finalizing"
+                } else {
+                    "running tools"
+                };
+                clear_status_line(&mut status_width)?;
                 print_tool_result(tool_call, result);
             }
             AgentEvent::Done => {
+                clear_status_line(&mut status_width)?;
                 if started_content {
                     println!();
                 }
+                let elapsed = started_at.elapsed();
+                println!(
+                    "{}",
+                    format!(
+                        "● completed in {}.{:01}s",
+                        elapsed.as_secs(),
+                        elapsed.subsec_millis() / 100
+                    )
+                    .dark_grey()
+                );
                 break;
             }
         }
@@ -381,10 +419,28 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInline mode keeps native terminal scrollback and preserves output after Ctrl+C."
+    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
     print!("\x1b[2J\x1b[H");
     let _ = io::stdout().flush();
+}
+
+fn render_status_line(text: &str, prev_width: &mut usize) -> io::Result<()> {
+    let width = text.chars().count();
+    let padding = prev_width.saturating_sub(width);
+    print!("\r{}{}", text.dark_grey(), " ".repeat(padding));
+    io::stdout().flush()?;
+    *prev_width = width;
+    Ok(())
+}
+
+fn clear_status_line(prev_width: &mut usize) -> io::Result<()> {
+    if *prev_width > 0 {
+        print!("\r{}\r", " ".repeat(*prev_width));
+        io::stdout().flush()?;
+        *prev_width = 0;
+    }
+    Ok(())
 }

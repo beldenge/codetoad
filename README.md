@@ -22,6 +22,7 @@ Implemented now:
 - Inline-first mode with native terminal scrollback parity
 - Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
+- Inline mode shows a live spinner + elapsed seconds during thinking/tool execution and a completion duration summary
 - In-session chat history navigation (PageUp/PageDown and mouse wheel)
 - Exit transcript printout so Ctrl+C preserves the session output
 - Tool-calling agent loop with max tool rounds
