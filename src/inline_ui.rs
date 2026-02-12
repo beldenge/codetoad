@@ -2,10 +2,11 @@ use crate::agent::{Agent, AgentEvent, ToolCallSummary};
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
-use crossterm::event::DisableMouseCapture;
+use crossterm::cursor::MoveLeft;
+use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::style::Stylize;
-use crossterm::terminal::disable_raw_mode;
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Instant;
@@ -25,27 +26,25 @@ pub async fn run_inline(
 ) -> Result<()> {
     recover_terminal_state();
     print_logo_and_tips();
+    let mut history: Vec<String> = Vec::new();
 
     if let Some(initial) = initial_message {
+        history.push(initial.clone());
         handle_input(&initial, agent.clone(), settings.clone()).await?;
     }
 
     loop {
-        print!("{} ", ">".cyan());
-        io::stdout().flush()?;
-
-        let mut line = String::new();
-        let read = io::stdin().read_line(&mut line)?;
-        if read == 0 {
+        let Some(input) = read_prompt_line(&history)? else {
             break;
-        }
-        let input = line.trim().to_string();
+        };
+        let input = input.trim().to_string();
         if input.is_empty() {
             continue;
         }
         if input == "exit" || input == "quit" || input == "/exit" {
             break;
         }
+        history.push(input.clone());
         handle_input(&input, agent.clone(), settings.clone()).await?;
     }
 
@@ -160,6 +159,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     let cancel_token = CancellationToken::new();
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
 
+    let error_tx = agent_tx.clone();
     let agent_for_task = agent.clone();
     tokio::spawn(async move {
         let result = agent_for_task
@@ -168,7 +168,10 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
             .process_user_message_stream(message, cancel_token, agent_tx)
             .await;
         if let Err(err) = result {
-            eprintln!("Error: {err:#}");
+            error_tx
+                .send(AgentEvent::Error(format!("{err:#}")))
+                .ok();
+            error_tx.send(AgentEvent::Done).ok();
         }
     });
 
@@ -199,6 +202,10 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
         };
 
         let Some(event) = event else {
+            clear_status_line(&mut status_width)?;
+            if started_content {
+                println!();
+            }
             break;
         };
 
@@ -260,6 +267,14 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                     )
                     .dark_grey()
                 );
+                break;
+            }
+            AgentEvent::Error(err) => {
+                clear_status_line(&mut status_width)?;
+                if started_content {
+                    println!();
+                }
+                println!("{}", format!("Error: {err}").red());
                 break;
             }
         }
@@ -419,7 +434,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInput controls:\n  Up/Down       History\n  Left/Right    Move cursor\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
@@ -443,4 +458,230 @@ fn clear_status_line(prev_width: &mut usize) -> io::Result<()> {
         *prev_width = 0;
     }
     Ok(())
+}
+
+fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
+    enable_raw_mode()?;
+    let mut input = String::new();
+    let mut cursor = 0usize;
+    let mut history_idx: Option<usize> = None;
+    let mut ctrl_c_armed = false;
+    render_input_line(&input, cursor)?;
+
+    loop {
+        let event = event::read()?;
+        let CEvent::Key(key) = event else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        match key.code {
+            KeyCode::Enter => {
+                disable_raw_mode()?;
+                print!("\r\n");
+                io::stdout().flush()?;
+                return Ok(Some(input));
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if input.is_empty() {
+                    if ctrl_c_armed {
+                        disable_raw_mode()?;
+                        print!("\r\n");
+                        io::stdout().flush()?;
+                        return Ok(None);
+                    }
+                    ctrl_c_armed = true;
+                    print!("\r\x1b[2K{}\r\n", "Press Ctrl+C again to exit.".dark_grey());
+                } else {
+                    input.clear();
+                    cursor = 0;
+                    history_idx = None;
+                    ctrl_c_armed = false;
+                }
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if input.is_empty() {
+                    disable_raw_mode()?;
+                    print!("\r\n");
+                    io::stdout().flush()?;
+                    return Ok(None);
+                }
+                if cursor < input.len() {
+                    let next = next_boundary(&input, cursor);
+                    input.drain(cursor..next);
+                    ctrl_c_armed = false;
+                }
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                cursor = 0;
+                ctrl_c_armed = false;
+            }
+            KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                cursor = input.len();
+                ctrl_c_armed = false;
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                input.drain(..cursor);
+                cursor = 0;
+                history_idx = None;
+                ctrl_c_armed = false;
+            }
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let start = previous_word_start(&input, cursor);
+                input.drain(start..cursor);
+                cursor = start;
+                history_idx = None;
+                ctrl_c_armed = false;
+            }
+            KeyCode::Left => {
+                cursor = prev_boundary(&input, cursor);
+                ctrl_c_armed = false;
+            }
+            KeyCode::Right => {
+                cursor = next_boundary(&input, cursor);
+                ctrl_c_armed = false;
+            }
+            KeyCode::Home => {
+                cursor = 0;
+                ctrl_c_armed = false;
+            }
+            KeyCode::End => {
+                cursor = input.len();
+                ctrl_c_armed = false;
+            }
+            KeyCode::Backspace => {
+                if cursor > 0 {
+                    let prev = prev_boundary(&input, cursor);
+                    input.drain(prev..cursor);
+                    cursor = prev;
+                    history_idx = None;
+                }
+                ctrl_c_armed = false;
+            }
+            KeyCode::Delete => {
+                if cursor < input.len() {
+                    let next = next_boundary(&input, cursor);
+                    input.drain(cursor..next);
+                    history_idx = None;
+                }
+                ctrl_c_armed = false;
+            }
+            KeyCode::Up => {
+                if !history.is_empty() {
+                    let next = history_idx
+                        .map(|idx| idx.saturating_sub(1))
+                        .unwrap_or_else(|| history.len().saturating_sub(1));
+                    history_idx = Some(next);
+                    input = history[next].clone();
+                    cursor = input.len();
+                }
+                ctrl_c_armed = false;
+            }
+            KeyCode::Down => {
+                if !history.is_empty() {
+                    match history_idx {
+                        None => {}
+                        Some(idx) if idx + 1 >= history.len() => {
+                            history_idx = None;
+                            input.clear();
+                            cursor = 0;
+                        }
+                        Some(idx) => {
+                            let next = idx + 1;
+                            history_idx = Some(next);
+                            input = history[next].clone();
+                            cursor = input.len();
+                        }
+                    }
+                }
+                ctrl_c_armed = false;
+            }
+            KeyCode::Char(ch) => {
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
+                {
+                    input.insert(cursor, ch);
+                    cursor += ch.len_utf8();
+                    history_idx = None;
+                    ctrl_c_armed = false;
+                }
+            }
+            _ => {
+                ctrl_c_armed = false;
+            }
+        }
+
+        render_input_line(&input, cursor)?;
+    }
+}
+
+fn render_input_line(input: &str, cursor: usize) -> io::Result<()> {
+    print!("\r\x1b[2K{} {}", ">".cyan(), input);
+    print!("\x1b[K");
+    let tail = input[cursor..].chars().count();
+    if tail > 0 {
+        execute!(io::stdout(), MoveLeft(tail as u16))?;
+    }
+    io::stdout().flush()
+}
+
+fn prev_boundary(input: &str, cursor: usize) -> usize {
+    if cursor == 0 {
+        return 0;
+    }
+    input[..cursor]
+        .char_indices()
+        .last()
+        .map(|(idx, _)| idx)
+        .unwrap_or(0)
+}
+
+fn next_boundary(input: &str, cursor: usize) -> usize {
+    if cursor >= input.len() {
+        return input.len();
+    }
+    let mut iter = input[cursor..].char_indices();
+    let _ = iter.next();
+    if let Some((offset, _)) = iter.next() {
+        cursor + offset
+    } else {
+        input.len()
+    }
+}
+
+fn previous_word_start(input: &str, cursor: usize) -> usize {
+    if cursor == 0 {
+        return 0;
+    }
+    let mut index = cursor;
+
+    while index > 0 {
+        let prev = prev_boundary(input, index);
+        if !input[prev..index]
+            .chars()
+            .next()
+            .map(|ch| ch.is_whitespace())
+            .unwrap_or(false)
+        {
+            break;
+        }
+        index = prev;
+    }
+
+    while index > 0 {
+        let prev = prev_boundary(input, index);
+        if input[prev..index]
+            .chars()
+            .next()
+            .map(|ch| ch.is_whitespace())
+            .unwrap_or(false)
+        {
+            break;
+        }
+        index = prev;
+    }
+
+    index
 }

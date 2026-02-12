@@ -23,8 +23,9 @@ Implemented now:
 - Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
 - Inline mode shows a live spinner + elapsed seconds during thinking/tool execution and a completion duration summary
-- In-session chat history navigation (PageUp/PageDown and mouse wheel)
-- Exit transcript printout so Ctrl+C preserves the session output
+- Inline prompt supports rich key controls (history, cursor movement, word/line deletion)
+- Ctrl+C in prompt clears input first; pressing Ctrl+C again on empty input exits
+- Native terminal scrollback remains visible after exit/Ctrl+C
 - Tool-calling agent loop with max tool rounds
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items

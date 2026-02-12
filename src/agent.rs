@@ -26,6 +26,7 @@ pub enum AgentEvent {
         tool_call: ToolCallSummary,
         result: ToolResult,
     },
+    Error(String),
     Done,
 }
 
