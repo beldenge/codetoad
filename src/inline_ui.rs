@@ -68,20 +68,48 @@ async fn handle_input(
 
     if input == "/clear" {
         agent.lock().await.reset_conversation();
-        println!("Conversation cleared.");
+        clear_screen();
+        print_logo_and_tips();
         return Ok(());
     }
 
     if input == "/models" {
         let available = settings.lock().await.get_available_models();
         let current = agent.lock().await.current_model().to_string();
-        println!("Available models:");
-        for model in available {
-            if model == current {
-                println!("* {model} (current)");
+        println!("Available models (choose number, model name, or blank to cancel):");
+        for (idx, model) in available.iter().enumerate() {
+            if model == &current {
+                println!("{}. {} (current)", idx + 1, model);
             } else {
-                println!("  {model}");
+                println!("{}. {}", idx + 1, model);
             }
+        }
+        print!("model> ");
+        io::stdout().flush()?;
+        let mut selected = String::new();
+        io::stdin().read_line(&mut selected)?;
+        let selected = selected.trim();
+        if selected.is_empty() {
+            println!("Model selection cancelled.");
+            return Ok(());
+        }
+        let candidate = if let Ok(index) = selected.parse::<usize>() {
+            if index == 0 || index > available.len() {
+                println!("Invalid model selection index: {selected}");
+                return Ok(());
+            }
+            available[index - 1].clone()
+        } else {
+            selected.to_string()
+        };
+
+        if available.iter().any(|m| m == &candidate) {
+            agent.lock().await.set_model(candidate.clone());
+            settings.lock().await.update_project_model(&candidate)?;
+            println!("Switched to model: {candidate}");
+        } else {
+            println!("Invalid model: {candidate}");
+            println!("Available: {}", available.join(", "));
         }
         return Ok(());
     }
@@ -101,6 +129,12 @@ async fn handle_input(
 
     if input == "/commit-and-push" {
         run_commit_and_push(agent).await?;
+        return Ok(());
+    }
+
+    if input.starts_with('/') {
+        println!("Unknown slash command: {input}");
+        println!("Use /help to see available commands.");
         return Ok(());
     }
 
@@ -355,4 +389,9 @@ fn is_direct_command(input: &str) -> bool {
 
 fn help_text() -> &'static str {
     "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInline mode keeps native terminal scrollback and preserves output after Ctrl+C."
+}
+
+fn clear_screen() {
+    print!("\x1b[2J\x1b[H");
+    let _ = io::stdout().flush();
 }

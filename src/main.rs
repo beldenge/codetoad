@@ -20,7 +20,10 @@ use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
+
+static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -94,7 +97,10 @@ async fn main() -> Result<()> {
     };
 
     if cli.ui == UiMode::Tui {
-        tui::run_interactive(agent, settings, initial_message).await
+        TUI_ACTIVE.store(true, Ordering::SeqCst);
+        let result = tui::run_interactive(agent, settings, initial_message).await;
+        TUI_ACTIVE.store(false, Ordering::SeqCst);
+        result
     } else {
         inline_ui::run_inline(agent, settings, initial_message).await
     }
@@ -104,7 +110,12 @@ fn install_ctrlc_handler() -> Result<()> {
     ctrlc::set_handler(|| {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+        if TUI_ACTIVE.load(Ordering::SeqCst) {
+            let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+        } else {
+            let _ = execute!(stdout, DisableMouseCapture);
+        }
+        println!();
         std::process::exit(0);
     })
     .context("Failed to install Ctrl+C handler")
