@@ -28,10 +28,14 @@ fn default_models() -> Vec<String> {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct UserSettings {
+    #[serde(rename = "apiKey", alias = "api_key")]
     pub api_key: Option<String>,
+    #[serde(rename = "baseURL", alias = "base_url")]
     pub base_url: Option<String>,
+    #[serde(rename = "defaultModel", alias = "default_model")]
     pub default_model: Option<String>,
     pub models: Option<Vec<String>>,
+    #[serde(rename = "settingsVersion", alias = "settings_version")]
     pub settings_version: Option<u32>,
 }
 

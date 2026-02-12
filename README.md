@@ -84,9 +84,9 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 ## Settings
 
 User settings are stored in `~/.grok/user-settings.json` and include:
-- `api_key`
-- `base_url`
-- `default_model`
+- `apiKey`
+- `baseURL`
+- `defaultModel`
 - `models`
 
 Project settings are stored in `.grok/settings.json` and include:
