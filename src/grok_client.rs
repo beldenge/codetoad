@@ -387,7 +387,12 @@ where
             }
             return Ok(false);
         }
-        "response.output_item.added" | "response.output_item.done" => {
+        "response.output_item.added" => {
+            // Responses API may emit both `added` and `done` for the same item.
+            // We process tool calls on `done` to avoid duplicating full payloads.
+            return Ok(false);
+        }
+        "response.output_item.done" => {
             if let Some(tool_chunk) = parse_tool_call_event(data)? {
                 on_chunk(tool_chunk)?;
             }

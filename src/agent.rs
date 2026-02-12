@@ -299,10 +299,10 @@ fn accumulate_tool_calls(
         }
         if let Some(function) = &delta.function {
             if let Some(name) = &function.name {
-                entry.name.push_str(name);
+                merge_stream_field(&mut entry.name, name);
             }
             if let Some(arguments) = &function.arguments {
-                entry.arguments.push_str(arguments);
+                merge_stream_field(&mut entry.arguments, arguments);
             }
         }
 
@@ -310,6 +310,27 @@ fn accumulate_tool_calls(
             entry.id = format!("call_{}", delta.index);
         }
     }
+}
+
+fn merge_stream_field(target: &mut String, delta: &str) {
+    if delta.is_empty() {
+        return;
+    }
+    if target.is_empty() {
+        target.push_str(delta);
+        return;
+    }
+
+    // Some providers emit full field values repeatedly instead of token deltas.
+    // Replace with the longer prefix form rather than duplicating content.
+    if delta.starts_with(target.as_str()) {
+        *target = delta.to_string();
+        return;
+    }
+    if target.as_str() == delta {
+        return;
+    }
+    target.push_str(delta);
 }
 
 fn build_system_prompt(cwd: &Path) -> String {
