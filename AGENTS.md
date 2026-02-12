@@ -19,7 +19,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 
 - `src/main.rs`
   - CLI entrypoint
-  - interactive mode, headless prompt mode, and git subcommand routing
+  - interactive mode (`--ui inline|tui`), headless prompt mode, and git subcommand routing
 - `src/cli.rs`
   - clap argument/subcommand definitions
 - `src/settings.rs`
@@ -39,6 +39,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - `view_file`, `create_file`, `str_replace_editor`, `bash`
 - `src/tui.rs`
   - ratatui state, rendering, input handling, slash commands
+- `src/inline_ui.rs`
+  - scrollback-native inline interaction loop
+  - default parity mode for terminal history behavior
 
 ## Slash Commands Implemented
 

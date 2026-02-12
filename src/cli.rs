@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -26,11 +26,20 @@ pub struct Cli {
     #[arg(long = "max-tool-rounds", default_value_t = 400, global = true)]
     pub max_tool_rounds: usize,
 
+    #[arg(long = "ui", value_enum, default_value_t = UiMode::Inline, global = true)]
+    pub ui: UiMode,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 
     #[arg()]
     pub message: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum UiMode {
+    Inline,
+    Tui,
 }
 
 #[derive(Debug, Subcommand)]

@@ -449,6 +449,9 @@ async fn submit(
     if message == "/clear" {
         app.entries.clear();
         app.reset_processing();
+        app.chat_scroll = 0;
+        app.follow_tail = true;
+        agent.lock().await.reset_conversation();
         return Ok(());
     }
     if message == "/help" {

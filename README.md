@@ -19,6 +19,9 @@ It provides:
 
 Implemented now:
 - Interactive streaming UI
+- Two UI modes:
+  - `inline` (default): native terminal scrollback parity
+  - `tui`: full-screen ratatui mode
 - In-session chat history navigation (PageUp/PageDown and mouse wheel)
 - Exit transcript printout so Ctrl+C preserves the session output
 - Tool-calling agent loop with max tool rounds
@@ -54,6 +57,13 @@ Interactive:
 cargo run -- --api-key <KEY>
 ```
 
+Choose UI mode explicitly:
+
+```bash
+cargo run -- --api-key <KEY> --ui inline
+cargo run -- --api-key <KEY> --ui tui
+```
+
 Headless prompt:
 
 ```bash
@@ -81,6 +91,7 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 --model, -m
 --prompt, -p
 --max-tool-rounds
+--ui <inline|tui>
 ```
 
 ## Settings

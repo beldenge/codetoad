@@ -2,13 +2,14 @@ mod agent;
 mod cli;
 mod custom_instructions;
 mod grok_client;
+mod inline_ui;
 mod protocol;
 mod settings;
 mod tools;
 mod tui;
 
 use crate::agent::Agent;
-use crate::cli::{Cli, Commands, GitCommands};
+use crate::cli::{Cli, Commands, GitCommands, UiMode};
 use crate::settings::SettingsManager;
 use crate::tools::execute_bash_command;
 use anyhow::{Context, Result, bail};
@@ -87,7 +88,11 @@ async fn main() -> Result<()> {
         Some(cli.message.join(" "))
     };
 
-    tui::run_interactive(agent, settings, initial_message).await
+    if cli.ui == UiMode::Tui {
+        tui::run_interactive(agent, settings, initial_message).await
+    } else {
+        inline_ui::run_inline(agent, settings, initial_message).await
+    }
 }
 
 async fn headless_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {

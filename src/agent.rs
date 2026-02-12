@@ -41,6 +41,7 @@ struct PartialToolCall {
 pub struct Agent {
     client: GrokClient,
     messages: Vec<ChatMessage>,
+    system_prompt: String,
     max_tool_rounds: usize,
     tools: Vec<ChatTool>,
 }
@@ -54,9 +55,10 @@ impl Agent {
         cwd: &Path,
     ) -> Result<Self> {
         let client = GrokClient::new(api_key, base_url, model)?;
+        let system_prompt = build_system_prompt(cwd);
         let messages = vec![ChatMessage {
             role: "system".to_string(),
-            content: Some(build_system_prompt(cwd)),
+            content: Some(system_prompt.clone()),
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -64,6 +66,7 @@ impl Agent {
         Ok(Self {
             client,
             messages,
+            system_prompt,
             max_tool_rounds,
             tools: default_tools(),
         })
@@ -75,6 +78,15 @@ impl Agent {
 
     pub fn set_model(&mut self, model: String) {
         self.client.set_model(model);
+    }
+
+    pub fn reset_conversation(&mut self) {
+        self.messages = vec![ChatMessage {
+            role: "system".to_string(),
+            content: Some(self.system_prompt.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
     }
 
     pub async fn generate_plain_text(&self, prompt: &str) -> Result<String> {
