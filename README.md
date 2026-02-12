@@ -19,6 +19,8 @@ It provides:
 
 Implemented now:
 - Interactive streaming UI
+- In-session chat history navigation (PageUp/PageDown and mouse wheel)
+- Exit transcript printout so Ctrl+C preserves the session output
 - Tool-calling agent loop with max tool rounds
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items

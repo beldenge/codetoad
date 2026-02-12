@@ -2,7 +2,10 @@ use crate::agent::{Agent, AgentEvent, ToolCallSummary};
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event as CEvent, KeyCode, KeyEventKind,
+    KeyModifiers, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -202,7 +205,7 @@ pub async fn run_interactive(
             tokio::select! {
                 _ = tick.tick() => {}
                 Some(event) = input_rx.recv() => {
-                    on_key(event, &mut app, agent.clone(), settings.clone(), ui_tx.clone()).await?;
+                    on_input_event(event, &mut app, agent.clone(), settings.clone(), ui_tx.clone()).await?;
                 }
                 Some(event) = ui_rx.recv() => {
                     on_ui_event(event, &mut app);
@@ -234,24 +237,51 @@ fn spawn_input_thread(tx: mpsc::UnboundedSender<CEvent>) {
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     disable_raw_mode().context("disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).context("leave alt screen")?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .context("leave alt screen")?;
     terminal.show_cursor()?;
     Ok(())
 }
 
-async fn on_key(
+async fn on_input_event(
     event: CEvent,
     app: &mut App,
     agent: Arc<Mutex<Agent>>,
     settings: Arc<Mutex<SettingsManager>>,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
 ) -> Result<()> {
+    if let CEvent::Mouse(mouse) = event {
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                app.follow_tail = false;
+                app.chat_scroll = app.chat_scroll.saturating_sub(3);
+            }
+            MouseEventKind::ScrollDown => {
+                if app.follow_tail {
+                    // stay pinned at tail
+                } else {
+                    app.chat_scroll = app.chat_scroll.saturating_add(3);
+                    let total = history_line_count(app);
+                    if app.chat_scroll >= total.saturating_sub(1) {
+                        app.follow_tail = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     let CEvent::Key(key) = event else {
         return Ok(());
     };
@@ -1029,7 +1059,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nNavigation: PageUp/PageDown scroll history, Esc cancels active generation\n\nDirect commands: ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm"
+    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nNavigation: mouse wheel + PageUp/PageDown scroll history, Esc cancels active generation\n\nDirect commands: ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm"
 }
 
 fn now_millis() -> u128 {
