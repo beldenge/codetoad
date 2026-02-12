@@ -22,6 +22,7 @@ Implemented now:
 - Two UI modes:
   - `inline` (default): native terminal scrollback parity
   - `tui`: full-screen ratatui mode
+- Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - In-session chat history navigation (PageUp/PageDown and mouse wheel)
 - Exit transcript printout so Ctrl+C preserves the session output
 - Tool-calling agent loop with max tool rounds

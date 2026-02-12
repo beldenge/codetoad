@@ -4,6 +4,7 @@ use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
 use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
+use crossterm::style::Stylize;
 use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ pub async fn run_inline(
     }
 
     loop {
-        print!("> ");
+        print!("{} ", ">".cyan());
         io::stdout().flush()?;
 
         let mut line = String::new();
@@ -115,7 +116,6 @@ async fn handle_input(
         return Ok(());
     }
 
-    println!("> {input}");
     stream_agent_message(input.to_string(), agent).await
 }
 
@@ -140,7 +140,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
         match event {
             AgentEvent::Content(chunk) => {
                 if !started_content {
-                    print!("o ");
+                    print!("{} ", "●".white());
                     started_content = true;
                 }
                 print!("{chunk}");
@@ -152,8 +152,12 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                     started_content = false;
                 }
                 for call in calls {
-                    println!("o {}({})", pretty_tool_name(&call.name), tool_target(&call));
-                    println!("  -> Executing...");
+                    println!(
+                        "{} {}",
+                        "●".magenta(),
+                        format!("{}({})", pretty_tool_name(&call.name), tool_target(&call)).white()
+                    );
+                    println!("{}", "  -> Executing...".cyan());
                 }
             }
             AgentEvent::ToolResult { tool_call, result } => {
@@ -283,21 +287,25 @@ fn print_logo_and_tips() {
 }
 
 fn print_tool_result(call: ToolCallSummary, result: ToolResult) {
-    println!("o {}({})", pretty_tool_name(&call.name), tool_target(&call));
+    println!(
+        "{} {}",
+        "●".magenta(),
+        format!("{}({})", pretty_tool_name(&call.name), tool_target(&call)).white()
+    );
     if result.success {
         if let Some(output) = result.output {
             for line in output.replace("\r\n", "\n").split('\n') {
-                println!("  -> {line}");
+                println!("{}", format!("  -> {line}").dark_grey());
             }
         } else {
-            println!("  -> Success");
+            println!("{}", "  -> Success".dark_grey());
         }
     } else if let Some(error) = result.error {
         for line in error.replace("\r\n", "\n").split('\n') {
-            println!("  -> {line}");
+            println!("{}", format!("  -> {line}").red());
         }
     } else {
-        println!("  -> Error");
+        println!("{}", "  -> Error".red());
     }
 }
 

@@ -387,12 +387,35 @@ where
             }
             return Ok(false);
         }
+        "response.output_text.done" | "response.content_part.done" => {
+            let payload = serde_json::from_str::<Value>(data)
+                .with_context(|| format!("Invalid responses done payload: {data}"))?;
+            let text = payload
+                .get("text")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    payload
+                        .get("part")
+                        .and_then(|part| part.get("text"))
+                        .and_then(Value::as_str)
+                })
+                .unwrap_or_default();
+            if !text.is_empty() {
+                on_chunk(make_content_chunk(text))?;
+            }
+            return Ok(false);
+        }
         "response.output_item.added" => {
             // Responses API may emit both `added` and `done` for the same item.
             // We process tool calls on `done` to avoid duplicating full payloads.
             return Ok(false);
         }
         "response.output_item.done" => {
+            if let Some(text) = parse_message_item_text(data)?
+                && !text.is_empty()
+            {
+                on_chunk(make_content_chunk(&text))?;
+            }
             if let Some(tool_chunk) = parse_tool_call_event(data)? {
                 on_chunk(tool_chunk)?;
             }
@@ -416,10 +439,52 @@ where
         return Ok(false);
     }
 
+    if let Some(text) = parse_message_item_text(data)?
+        && !text.is_empty()
+    {
+        on_chunk(make_content_chunk(&text))?;
+        return Ok(false);
+    }
+
     if let Ok(chunk) = serde_json::from_str::<ChatCompletionStreamChunk>(data) {
         on_chunk(chunk)?;
     }
     Ok(false)
+}
+
+fn parse_message_item_text(data: &str) -> Result<Option<String>> {
+    let payload = serde_json::from_str::<Value>(data).unwrap_or_else(|_| json!({}));
+    let item = payload
+        .get("item")
+        .cloned()
+        .unwrap_or_else(|| payload.clone());
+    let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+
+    if item_type != "message" {
+        return Ok(None);
+    }
+
+    let mut parts = Vec::new();
+    if let Some(content_items) = item.get("content").and_then(Value::as_array) {
+        for part in content_items {
+            let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
+            if matches!(part_type, "output_text" | "text" | "input_text")
+                && let Some(text) = part.get("text").and_then(Value::as_str)
+                && !text.is_empty()
+            {
+                parts.push(text.to_string());
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        return Ok(item
+            .get("text")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string()));
+    }
+
+    Ok(Some(parts.join("")))
 }
 
 fn convert_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<Value> {
