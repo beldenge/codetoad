@@ -119,6 +119,8 @@ struct App {
     auto_edit: bool,
     stream_idx: Option<usize>,
     cancel: Option<CancellationToken>,
+    chat_scroll: usize,
+    follow_tail: bool,
     quit: bool,
 }
 
@@ -141,6 +143,8 @@ impl App {
             auto_edit: false,
             stream_idx: None,
             cancel: None,
+            chat_scroll: 0,
+            follow_tail: true,
             quit: false,
         }
     }
@@ -213,6 +217,7 @@ pub async fn run_interactive(
     .await;
 
     restore_terminal(&mut terminal)?;
+    print_session_transcript(&app.entries);
     result
 }
 
@@ -342,6 +347,12 @@ async fn on_key(
     }
 
     match key.code {
+        KeyCode::PageUp => {
+            page_up_history(app);
+        }
+        KeyCode::PageDown => {
+            page_down_history(app);
+        }
         KeyCode::Enter => {
             let input = std::mem::take(&mut app.input);
             app.cursor = 0;
@@ -690,25 +701,13 @@ fn draw(frame: &mut Frame, app: &App) {
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(logo_lines), chunks[0]);
 
-    let mut lines = Vec::<Line>::new();
-    if app.entries.is_empty() {
-        lines.push(Line::from(vec![Span::styled(
-            "Tips for getting started:",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        lines.push(Line::from("1. Ask questions, edit files, or run commands."));
-        lines.push(Line::from("2. Be specific for the best results."));
-        lines.push(Line::from("3. Create GROK.md files to customize behavior."));
-        lines.push(Line::from("4. Press Shift+Tab to toggle auto-edit mode."));
-        lines.push(Line::from("5. /help for more information."));
+    let lines = build_history_lines(app);
+    let max_scroll = lines.len().saturating_sub(chunks[1].height as usize);
+    let scroll = if app.follow_tail {
+        max_scroll
     } else {
-        for entry in &app.entries {
-            lines.extend(entry_lines(entry));
-        }
-    }
-    let scroll = lines.len().saturating_sub(chunks[1].height as usize) as u16;
+        app.chat_scroll.min(max_scroll)
+    } as u16;
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
@@ -827,6 +826,28 @@ fn centered_rect(percent_x: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     Rect::new(x, y, width, height.min(area.height))
+}
+
+fn build_history_lines(app: &App) -> Vec<Line<'static>> {
+    let mut lines = Vec::<Line>::new();
+    if app.entries.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "Tips for getting started:",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        lines.push(Line::from("1. Ask questions, edit files, or run commands."));
+        lines.push(Line::from("2. Be specific for the best results."));
+        lines.push(Line::from("3. Create GROK.md files to customize behavior."));
+        lines.push(Line::from("4. Press Shift+Tab to toggle auto-edit mode."));
+        lines.push(Line::from("5. /help for more information."));
+    } else {
+        for entry in &app.entries {
+            lines.extend(entry_lines(entry));
+        }
+    }
+    lines
 }
 
 fn gradient(line: &str, index: usize) -> Line<'static> {
@@ -956,13 +977,59 @@ fn history_down(app: &mut App) {
     app.refresh_suggestions();
 }
 
+fn page_up_history(app: &mut App) {
+    let total = history_line_count(app);
+    if total == 0 {
+        return;
+    }
+    let current = if app.follow_tail {
+        total.saturating_sub(1)
+    } else {
+        app.chat_scroll
+    };
+    app.chat_scroll = current.saturating_sub(10);
+    app.follow_tail = false;
+}
+
+fn page_down_history(app: &mut App) {
+    let total = history_line_count(app);
+    if total == 0 {
+        app.follow_tail = true;
+        app.chat_scroll = 0;
+        return;
+    }
+    let current = if app.follow_tail {
+        total.saturating_sub(1)
+    } else {
+        app.chat_scroll
+    };
+    let next = current.saturating_add(10);
+    if next >= total.saturating_sub(1) {
+        app.follow_tail = true;
+    } else {
+        app.chat_scroll = next;
+        app.follow_tail = false;
+    }
+}
+
+fn history_line_count(app: &App) -> usize {
+    if app.entries.is_empty() {
+        6
+    } else {
+        app.entries
+            .iter()
+            .map(|entry| entry_lines(entry).len())
+            .sum()
+    }
+}
+
 fn is_direct_command(input: &str) -> bool {
     let first = input.split_whitespace().next().unwrap_or_default();
     DIRECT_COMMANDS.contains(&first)
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nDirect commands: ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm"
+    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nNavigation: PageUp/PageDown scroll history, Esc cancels active generation\n\nDirect commands: ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm"
 }
 
 fn now_millis() -> u128 {
@@ -970,4 +1037,44 @@ fn now_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0)
+}
+
+fn print_session_transcript(entries: &[Entry]) {
+    if entries.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("Session transcript:");
+    for entry in entries {
+        match entry.kind {
+            EntryKind::User => {
+                println!("> {}", entry.content);
+            }
+            EntryKind::Assistant => {
+                if entry.content.is_empty() {
+                    println!("o");
+                } else {
+                    for (i, line) in entry.content.replace("\r\n", "\n").split('\n').enumerate() {
+                        if i == 0 {
+                            println!("o {line}");
+                        } else {
+                            println!("  {line}");
+                        }
+                    }
+                }
+            }
+            EntryKind::ToolCall | EntryKind::ToolResult => {
+                let label = entry
+                    .tool
+                    .as_ref()
+                    .map(|tool| format!("{}({})", pretty_tool_name(&tool.name), tool_path(tool)))
+                    .unwrap_or_else(|| "Tool".to_string());
+                println!("o {label}");
+                for line in entry.content.replace("\r\n", "\n").split('\n') {
+                    println!("  -> {line}");
+                }
+            }
+        }
+    }
 }
