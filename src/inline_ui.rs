@@ -5,7 +5,7 @@ use anyhow::Result;
 use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
 use crossterm::style::Stylize;
-use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
+use crossterm::terminal::disable_raw_mode;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -52,7 +52,7 @@ pub async fn run_inline(
 fn recover_terminal_state() {
     let _ = disable_raw_mode();
     let mut stdout = io::stdout();
-    let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+    let _ = execute!(stdout, DisableMouseCapture);
 }
 
 async fn handle_input(

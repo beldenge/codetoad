@@ -24,7 +24,7 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    recover_terminal_state();
+    install_ctrlc_handler()?;
     let cli = Cli::parse();
 
     if let Some(directory) = cli.directory.as_ref() {
@@ -100,11 +100,14 @@ async fn main() -> Result<()> {
     }
 }
 
-fn recover_terminal_state() {
-    // Best-effort cleanup if a previous TUI session exited unexpectedly.
-    let _ = disable_raw_mode();
-    let mut stdout = io::stdout();
-    let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+fn install_ctrlc_handler() -> Result<()> {
+    ctrlc::set_handler(|| {
+        let _ = disable_raw_mode();
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
+        std::process::exit(0);
+    })
+    .context("Failed to install Ctrl+C handler")
 }
 
 async fn headless_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
