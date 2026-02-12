@@ -27,7 +27,10 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/custom_instructions.rs`
   - loads `.grok/GROK.md` and `~/.grok/GROK.md`
 - `src/grok_client.rs`
-  - OpenAI-compatible HTTP client and SSE stream parsing
+  - OpenAI-compatible HTTP client
+  - Uses xAI Responses API for `api.x.ai` base URLs
+  - Falls back to Chat Completions format for non-xAI compatible providers
+  - SSE stream parsing for both formats
 - `src/protocol.rs`
   - serde request/response DTOs
 - `src/agent.rs`

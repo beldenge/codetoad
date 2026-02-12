@@ -3,7 +3,7 @@
 `grok-build` is a Rust port of the core `grok-cli` coding-agent workflow.
 
 It provides:
-- OpenAI-compatible chat completions against xAI (or any compatible base URL)
+- xAI Responses API integration (non-deprecated path) with compatibility fallback for chat-completions-style providers
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`)
 - Streaming terminal UI built with `ratatui` + `crossterm`
 - Slash commands compatible with the TypeScript app:
@@ -20,6 +20,10 @@ It provides:
 Implemented now:
 - Interactive streaming UI
 - Tool-calling agent loop with max tool rounds
+- Responses API request/response conversion:
+  - Converts chat-style message history to Responses `input` items
+  - Flattens tool schema format for Responses API
+  - Parses Responses API output + streaming events back into chat/tool abstractions
 - Settings loading/saving:
   - `~/.grok/user-settings.json`
   - `.grok/settings.json`
