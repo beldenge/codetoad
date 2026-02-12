@@ -9,6 +9,7 @@ use crossterm::terminal::disable_raw_mode;
 use std::io::{self, Write};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
+use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 
 const DIRECT_COMMANDS: &[&str] = &[
@@ -136,7 +137,23 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     });
 
     let mut started_content = false;
-    while let Some(event) = agent_rx.recv().await {
+    let mut thinking_shown = false;
+    let mut thinking_tick = time::interval(Duration::from_millis(650));
+
+    loop {
+        let event = tokio::select! {
+            _ = thinking_tick.tick(), if !started_content && !thinking_shown => {
+                println!("{}", "● thinking...".dark_grey());
+                thinking_shown = true;
+                continue;
+            }
+            maybe_event = agent_rx.recv() => maybe_event,
+        };
+
+        let Some(event) = event else {
+            break;
+        };
+
         match event {
             AgentEvent::Content(chunk) => {
                 if !started_content {

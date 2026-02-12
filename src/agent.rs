@@ -188,9 +188,10 @@ impl Agent {
                     &cancel_token,
                     |chunk| {
                         for choice in chunk.choices {
-                            if let Some(piece) = choice.delta.content {
-                                content.push_str(&piece);
-                                updates.send(AgentEvent::Content(piece)).ok();
+                            if let Some(piece) = choice.delta.content
+                                && let Some(incremental) = merge_stream_text(&mut content, &piece)
+                            {
+                                updates.send(AgentEvent::Content(incremental)).ok();
                             }
 
                             if let Some(tool_calls) = choice.delta.tool_calls {
@@ -343,6 +344,33 @@ fn merge_stream_field(target: &mut String, delta: &str) {
         return;
     }
     target.push_str(delta);
+}
+
+fn merge_stream_text(target: &mut String, incoming: &str) -> Option<String> {
+    if incoming.is_empty() {
+        return None;
+    }
+    if target.is_empty() {
+        target.push_str(incoming);
+        return Some(incoming.to_string());
+    }
+
+    // Some streams send complete snapshots repeatedly instead of deltas.
+    if incoming == target.as_str() {
+        return None;
+    }
+    if incoming.starts_with(target.as_str()) {
+        let suffix = &incoming[target.len()..];
+        if suffix.is_empty() {
+            return None;
+        }
+        target.push_str(suffix);
+        return Some(suffix.to_string());
+    }
+
+    // Standard delta chunk.
+    target.push_str(incoming);
+    Some(incoming.to_string())
 }
 
 fn build_system_prompt(cwd: &Path) -> String {
