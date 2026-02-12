@@ -11,7 +11,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap,
+};
 use ratatui::{Frame, Terminal};
 use std::io::{self, Stdout};
 use std::sync::Arc;
@@ -707,7 +709,12 @@ fn draw(frame: &mut Frame, app: &App) {
         }
     }
     let scroll = lines.len().saturating_sub(chunks[1].height as usize) as u16;
-    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), chunks[1]);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        chunks[1],
+    );
 
     let border = if app.processing {
         Color::Yellow
@@ -838,15 +845,14 @@ fn gradient(line: &str, index: usize) -> Line<'static> {
 
 fn entry_lines(entry: &Entry) -> Vec<Line<'static>> {
     match entry.kind {
-        EntryKind::User => vec![Line::from(format!("> {}", entry.content))],
-        EntryKind::Assistant => vec![
-            Line::from(format!("o {}", entry.content)),
+        EntryKind::User => split_prefixed_lines("> ", &entry.content, Color::Reset),
+        EntryKind::Assistant => {
+            let mut lines = split_prefixed_lines("o ", &entry.content, Color::Reset);
             if entry.streaming {
-                Line::from("|")
-            } else {
-                Line::from("")
-            },
-        ],
+                lines.push(Line::from("|"));
+            }
+            lines
+        }
         EntryKind::ToolCall | EntryKind::ToolResult => {
             let tool = entry.tool.clone().unwrap_or(ToolCallSummary {
                 id: "unknown".to_string(),
@@ -854,19 +860,44 @@ fn entry_lines(entry: &Entry) -> Vec<Line<'static>> {
                 arguments: String::new(),
             });
             let label = format!("{}({})", pretty_tool_name(&tool.name), tool_path(&tool));
-            let mut lines = vec![Line::from(format!("o {label}"))];
             let color = if entry.success.unwrap_or(true) {
                 Color::Gray
             } else {
                 Color::Red
             };
-            lines.push(Line::from(vec![Span::styled(
-                format!("  -> {}", entry.content),
-                Style::default().fg(color),
-            )]));
+            let mut lines = vec![Line::from(format!("o {label}"))];
+            lines.extend(split_prefixed_lines("  -> ", &entry.content, color));
             lines
         }
     }
+}
+
+fn split_prefixed_lines(prefix: &str, content: &str, color: Color) -> Vec<Line<'static>> {
+    if content.is_empty() {
+        return vec![Line::from(prefix.to_string())];
+    }
+
+    let mut lines = Vec::new();
+    let normalized = content.replace("\r\n", "\n");
+    for (index, line) in normalized.split('\n').enumerate() {
+        let current_prefix = if index == 0 {
+            prefix.to_string()
+        } else {
+            " ".repeat(prefix.len())
+        };
+
+        let text = format!("{current_prefix}{line}");
+        if color == Color::Reset {
+            lines.push(Line::from(text));
+        } else {
+            lines.push(Line::from(vec![Span::styled(
+                text,
+                Style::default().fg(color),
+            )]));
+        }
+    }
+
+    lines
 }
 
 fn pretty_tool_name(name: &str) -> &str {
