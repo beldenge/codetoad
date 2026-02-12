@@ -3,7 +3,7 @@
 ## Purpose
 
 This repository is a Rust implementation of `grok-cli` behavior, focused on:
-- streaming terminal UX (`ratatui` + `crossterm`)
+- streaming terminal-native UX (`crossterm`)
 - OpenAI-compatible chat completions
 - agent tool loop for coding tasks
 
@@ -19,7 +19,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 
 - `src/main.rs`
   - CLI entrypoint
-  - interactive mode (`--ui inline|tui`), headless prompt mode, and git subcommand routing
+  - inline interactive mode (default), headless prompt mode, and git subcommand routing
 - `src/cli.rs`
   - clap argument/subcommand definitions
 - `src/settings.rs`
@@ -37,11 +37,14 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - ReAct-style loop and tool execution orchestration
 - `src/tools.rs`
   - `view_file`, `create_file`, `str_replace_editor`, `bash`
-- `src/tui.rs`
-  - ratatui state, rendering, input handling, slash commands
 - `src/inline_ui.rs`
   - scrollback-native inline interaction loop
-  - default parity mode for terminal history behavior
+  - primary parity mode for terminal history behavior
+
+## UI Direction
+
+- Runtime is inline-first for terminal-native behavior and stable scrollback.
+- `--ui tui` is deprecated and currently falls back to inline mode.
 
 ## Slash Commands Implemented
 

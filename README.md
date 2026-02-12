@@ -5,7 +5,7 @@
 It provides:
 - xAI Responses API integration (non-deprecated path) with compatibility fallback for chat-completions-style providers
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`)
-- Streaming terminal UI built with `ratatui` + `crossterm`
+- Streaming terminal-native UI built with `crossterm`
 - Slash commands compatible with the TypeScript app:
   - `/help`
   - `/clear`
@@ -19,9 +19,7 @@ It provides:
 
 Implemented now:
 - Interactive streaming UI
-- Two UI modes:
-  - `inline` (default): native terminal scrollback parity
-  - `tui`: full-screen ratatui mode
+- Inline-first mode with native terminal scrollback parity
 - Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
 - In-session chat history navigation (PageUp/PageDown and mouse wheel)
@@ -43,7 +41,7 @@ Not yet implemented:
 - MCP server integration
 - Morph fast-apply tool
 - xAI Agent Tools web-search integration (legacy live-search parameters are intentionally disabled)
-- Ink-specific visual parity details from the TypeScript UI
+- Full TypeScript Ink UI parity details (command suggestion popup, rich markdown rendering)
 
 ## Build
 
@@ -63,8 +61,9 @@ Choose UI mode explicitly:
 
 ```bash
 cargo run -- --api-key <KEY> --ui inline
-cargo run -- --api-key <KEY> --ui tui
 ```
+
+Note: `--ui tui` is currently deprecated and falls back to inline mode.
 
 Headless prompt:
 
@@ -93,7 +92,7 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 --model, -m
 --prompt, -p
 --max-tool-rounds
---ui <inline|tui>
+--ui <inline|tui> (tui currently deprecated)
 ```
 
 ## Settings

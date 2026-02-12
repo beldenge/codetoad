@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(
     name = "grok-build",
     version,
-    about = "A Rust-based Grok coding CLI with ratatui streaming UI"
+    about = "A Rust-based Grok coding CLI with terminal-native streaming UI"
 )]
 pub struct Cli {
     #[arg(short = 'd', long = "directory", global = true)]
@@ -39,6 +39,7 @@ pub struct Cli {
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum UiMode {
     Inline,
+    #[value(alias = "ratatui")]
     Tui,
 }
 

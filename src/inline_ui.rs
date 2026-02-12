@@ -224,13 +224,6 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 }
                 break;
             }
-            AgentEvent::Error(err) => {
-                if started_content {
-                    println!();
-                }
-                println!("Error: {err}");
-                break;
-            }
         }
     }
 

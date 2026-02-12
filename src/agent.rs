@@ -27,7 +27,6 @@ pub enum AgentEvent {
         result: ToolResult,
     },
     Done,
-    Error(String),
 }
 
 #[derive(Debug, Clone)]
@@ -343,7 +342,7 @@ fn merge_stream_field(target: &mut String, delta: &str) {
     if target.as_str() == delta {
         return;
     }
-    target.push_str(delta);
+    append_with_overlap(target, delta);
 }
 
 fn merge_stream_text(target: &mut String, incoming: &str) -> Option<String> {
@@ -368,9 +367,38 @@ fn merge_stream_text(target: &mut String, incoming: &str) -> Option<String> {
         return Some(suffix.to_string());
     }
 
-    // Standard delta chunk.
-    target.push_str(incoming);
-    Some(incoming.to_string())
+    let appended = append_with_overlap(target, incoming);
+    if appended.is_empty() {
+        None
+    } else {
+        Some(appended)
+    }
+}
+
+fn append_with_overlap(target: &mut String, incoming: &str) -> String {
+    if incoming.is_empty() {
+        return String::new();
+    }
+
+    let mut overlap_len = 0usize;
+    let mut boundaries = Vec::new();
+    boundaries.push(0usize);
+    boundaries.extend(incoming.char_indices().map(|(idx, _)| idx).skip(1));
+    boundaries.push(incoming.len());
+
+    for size in boundaries.into_iter().rev() {
+        if size == 0 || size > target.len() {
+            continue;
+        }
+        if target.ends_with(&incoming[..size]) {
+            overlap_len = size;
+            break;
+        }
+    }
+
+    let suffix = &incoming[overlap_len..];
+    target.push_str(suffix);
+    suffix.to_string()
 }
 
 fn build_system_prompt(cwd: &Path) -> String {

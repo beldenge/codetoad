@@ -6,7 +6,6 @@ mod inline_ui;
 mod protocol;
 mod settings;
 mod tools;
-mod tui;
 
 use crate::agent::Agent;
 use crate::cli::{Cli, Commands, GitCommands, UiMode};
@@ -16,14 +15,11 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
-use crossterm::terminal::{LeaveAlternateScreen, disable_raw_mode};
+use crossterm::terminal::disable_raw_mode;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
-
-static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -97,24 +93,16 @@ async fn main() -> Result<()> {
     };
 
     if cli.ui == UiMode::Tui {
-        TUI_ACTIVE.store(true, Ordering::SeqCst);
-        let result = tui::run_interactive(agent, settings, initial_message).await;
-        TUI_ACTIVE.store(false, Ordering::SeqCst);
-        result
-    } else {
-        inline_ui::run_inline(agent, settings, initial_message).await
+        eprintln!("`--ui tui` is deprecated. Falling back to `--ui inline`.");
     }
+    inline_ui::run_inline(agent, settings, initial_message).await
 }
 
 fn install_ctrlc_handler() -> Result<()> {
     ctrlc::set_handler(|| {
         let _ = disable_raw_mode();
         let mut stdout = io::stdout();
-        if TUI_ACTIVE.load(Ordering::SeqCst) {
-            let _ = execute!(stdout, LeaveAlternateScreen, DisableMouseCapture);
-        } else {
-            let _ = execute!(stdout, DisableMouseCapture);
-        }
+        let _ = execute!(stdout, DisableMouseCapture);
         println!();
         std::process::exit(0);
     })
