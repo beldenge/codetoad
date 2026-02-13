@@ -21,3 +21,11 @@ Backlog for upcoming parity and platform enhancements.
     - macOS Keychain
     - Linux Secret Service (DBus/libsecret) with a clear fallback path when unavailable
   - UX target: seamless first-run save and subsequent retrieval, with explicit user opt-in/opt-out.
+
+- [ ] Add provider/model compatibility beyond Grok-only usage
+  - Goal: support additional provider-compatible models while preserving current coding-agent UX and tool loop behavior.
+  - Scope notes: normalize streaming/tool responses across provider APIs and add per-model capability handling.
+
+- [ ] Enforce project-directory sandbox for tool operations
+  - Goal: prevent agent-driven file and shell operations from affecting paths outside the active project directory.
+  - Scope notes: canonicalize/resolve paths (including symlinks) and reject out-of-root access attempts for file tools and `cd`/bash execution context changes.
