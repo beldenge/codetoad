@@ -172,8 +172,9 @@ impl GrokClient {
         tools: &[ChatTool],
         search_mode: SearchMode,
     ) -> Result<ChatCompletionResponse> {
+        let model_for_request = self.responses_model_for(search_mode);
         let payload = ResponsesPayload::new(
-            self.current_model.clone(),
+            model_for_request,
             convert_messages_to_responses_input(messages),
             flatten_tools(tools),
             false,
@@ -278,8 +279,9 @@ impl GrokClient {
     where
         F: FnMut(ChatCompletionStreamChunk) -> Result<()>,
     {
+        let model_for_request = self.responses_model_for(search_mode);
         let payload = ResponsesPayload::new(
-            self.current_model.clone(),
+            model_for_request,
             convert_messages_to_responses_input(messages),
             flatten_tools(tools),
             true,
@@ -354,6 +356,21 @@ impl GrokClient {
             handle_sse_event(current_event.as_deref(), &current_data, on_chunk)?;
         }
         Ok(())
+    }
+
+    fn responses_model_for(&self, search_mode: SearchMode) -> String {
+        if !matches!(search_mode, SearchMode::Auto) {
+            return self.current_model.clone();
+        }
+        if supports_server_side_tools(&self.current_model) {
+            return self.current_model.clone();
+        }
+
+        std::env::var("GROK_SEARCH_MODEL")
+            .ok()
+            .map(|raw| raw.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "grok-4-latest".to_string())
     }
 }
 
@@ -783,7 +800,7 @@ impl ResponsesPayload {
         max_tokens: u32,
         search_mode: SearchMode,
     ) -> Self {
-        if matches!(search_mode, SearchMode::Auto) {
+        if matches!(search_mode, SearchMode::Auto) && supports_server_side_tools(&model) {
             tools.extend(server_side_search_tools());
         }
 
@@ -806,6 +823,10 @@ impl ResponsesPayload {
             search_parameters: None,
         }
     }
+}
+
+fn supports_server_side_tools(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("grok-4")
 }
 
 fn server_side_search_tools() -> Vec<Value> {

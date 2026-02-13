@@ -39,7 +39,8 @@ Implemented now:
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items
   - Flattens tool schema format for Responses API
-  - Adds xAI Agent Tools search (`web_search`, `x_search`) when search mode is auto
+  - Adds xAI Agent Tools search (`web_search`, `x_search`) when search mode is auto on Grok-4 models
+  - If current model is not Grok-4, search-enabled requests are routed to `grok-4-latest` (or `GROK_SEARCH_MODEL`) while non-search requests keep the selected model
   - Parses Responses API output + streaming events back into chat/tool abstractions
 - Settings loading/saving:
   - `~/.grok/user-settings.json`

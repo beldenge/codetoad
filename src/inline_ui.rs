@@ -4,7 +4,7 @@ use crate::agent::{
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
-use crossterm::cursor::{MoveDown, MoveLeft, MoveToColumn, MoveUp};
+use crossterm::cursor::{MoveDown, MoveToColumn, MoveUp};
 use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::style::Stylize;
@@ -1327,10 +1327,12 @@ fn render_prompt_with_suggestions(
         *suggestions_visible = false;
     }
 
-    let tail = input[cursor..].chars().count();
-    if tail > 0 {
-        execute!(io::stdout(), MoveLeft(tail as u16))?;
-    }
+    let prompt_prefix_cols = 2usize; // "> "
+    let input_cursor_cols = input[..cursor].chars().count();
+    let terminal_cols = size().map(|(cols, _)| cols as usize).unwrap_or(120usize);
+    let max_col = terminal_cols.saturating_sub(1);
+    let target_col = (prompt_prefix_cols + input_cursor_cols).min(max_col);
+    execute!(io::stdout(), MoveToColumn(target_col as u16))?;
     io::stdout().flush()
 }
 
