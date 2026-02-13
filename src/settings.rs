@@ -121,6 +121,7 @@ impl SettingsManager {
 
         manager.ensure_default_files()?;
         manager.maybe_migrate_plaintext_api_key_to_keychain()?;
+        manager.maybe_migrate_keychain_alias_for_active_provider();
         Ok(manager)
     }
 
@@ -703,6 +704,43 @@ impl SettingsManager {
         self.sync_legacy_fields_from_active();
         self.save_user()?;
         Ok(())
+    }
+
+    fn maybe_migrate_keychain_alias_for_active_provider(&mut self) {
+        if self.get_api_key_storage_mode() != ApiKeyStorageMode::Keychain {
+            return;
+        }
+
+        let active_id = self.active_provider_id();
+        if keychain_has_api_key(&active_id) {
+            return;
+        }
+
+        let active_kind = detect_provider(&self.get_base_url());
+        let Some(providers) = self.user_settings.providers.as_ref() else {
+            return;
+        };
+
+        for (candidate_id, profile) in providers {
+            if candidate_id == &active_id {
+                continue;
+            }
+            if detect_provider(&profile.base_url) != active_kind {
+                continue;
+            }
+
+            let Some(key) = load_api_key_from_keychain(candidate_id)
+                .ok()
+                .flatten()
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+
+            if store_api_key_in_keychain(&active_id, &key).is_ok() {
+                break;
+            }
+        }
     }
 }
 
