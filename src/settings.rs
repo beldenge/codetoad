@@ -755,11 +755,10 @@ fn store_api_key_in_keychain(provider_id: &str, api_key: &str) -> Result<()> {
         .context("Failed storing API key in keychain")?;
 
     if normalize_provider_id(provider_id).as_deref() == Some("xai") {
-        let legacy =
-            keyring_entry(LEGACY_KEYRING_ACCOUNT).context("Failed opening keychain entry")?;
-        legacy
-            .set_password(api_key)
-            .context("Failed storing API key in keychain")?;
+        // Legacy account compatibility is best-effort; do not fail the primary save.
+        if let Ok(legacy) = keyring_entry(LEGACY_KEYRING_ACCOUNT) {
+            let _ = legacy.set_password(api_key);
+        }
     }
 
     Ok(())
