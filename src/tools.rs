@@ -2,6 +2,7 @@ use crate::tool_catalog::{
     TOOL_BASH, TOOL_CREATE_FILE, TOOL_CREATE_TODO_LIST, TOOL_SEARCH, TOOL_STR_REPLACE_EDITOR,
     TOOL_UPDATE_TODO_LIST, TOOL_VIEW_FILE,
 };
+use crate::tool_context;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
@@ -9,7 +10,7 @@ use similar::TextDiff;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use tokio::process::Command;
 
@@ -133,7 +134,7 @@ fn execute_view_file(args: &Value) -> Result<ToolResult> {
         .and_then(Value::as_str)
         .context("Missing 'path' argument")?;
 
-    let resolved = Path::new(path);
+    let resolved = tool_context::resolve_path(path)?;
     if !resolved.exists() {
         return Ok(ToolResult::err(format!(
             "File or directory not found: {path}"
@@ -153,7 +154,7 @@ fn execute_view_file(args: &Value) -> Result<ToolResult> {
         )));
     }
 
-    let content = fs::read_to_string(resolved)
+    let content = fs::read_to_string(&resolved)
         .with_context(|| format!("Failed reading file {}", resolved.display()))?;
     let lines: Vec<&str> = content.lines().collect();
 
@@ -217,12 +218,12 @@ fn execute_create_file(args: &Value) -> Result<ToolResult> {
         .and_then(Value::as_str)
         .context("Missing 'content' argument")?;
 
-    let resolved = Path::new(path);
+    let resolved = tool_context::resolve_path(path)?;
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create parent directory {}", parent.display()))?;
     }
-    fs::write(resolved, content)
+    fs::write(&resolved, content)
         .with_context(|| format!("Failed writing file {}", resolved.display()))?;
 
     let created = TextDiff::from_lines("", content)
@@ -251,12 +252,12 @@ fn execute_str_replace_editor(args: &Value) -> Result<ToolResult> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let resolved = Path::new(path);
+    let resolved = tool_context::resolve_path(path)?;
     if !resolved.exists() {
         return Ok(ToolResult::err(format!("File not found: {path}")));
     }
 
-    let original = fs::read_to_string(resolved)
+    let original = fs::read_to_string(&resolved)
         .with_context(|| format!("Failed reading file {}", resolved.display()))?;
 
     if !original.contains(old_str) {
@@ -271,7 +272,7 @@ fn execute_str_replace_editor(args: &Value) -> Result<ToolResult> {
         original.replacen(old_str, new_str, 1)
     };
 
-    fs::write(resolved, &updated)
+    fs::write(&resolved, &updated)
         .with_context(|| format!("Failed writing file {}", resolved.display()))?;
 
     let diff = TextDiff::from_lines(&original, &updated)
@@ -352,6 +353,7 @@ async fn search_text(
     cmd.arg(query).arg(".");
 
     let output = cmd
+        .current_dir(tool_context::current_dir()?)
         .output()
         .await
         .with_context(|| format!("Failed running search command for query '{query}'"))?;
@@ -407,7 +409,11 @@ async fn search_files(
 
     cmd.arg(".");
 
-    let output = cmd.output().await.context("Failed running file search command")?;
+    let output = cmd
+        .current_dir(tool_context::current_dir()?)
+        .output()
+        .await
+        .context("Failed running file search command")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(anyhow::anyhow!("File search command failed: {stderr}"));
@@ -660,19 +666,20 @@ async fn execute_bash_tool(args: &Value) -> Result<ToolResult> {
 pub async fn execute_bash_command(command: &str) -> Result<ToolResult> {
     let trimmed = command.trim();
     if let Some(path) = trimmed.strip_prefix("cd ").map(str::trim) {
-        std::env::set_current_dir(path)
-            .with_context(|| format!("Failed to change directory to '{path}'"))?;
+        let new_dir = tool_context::set_current_dir(path)?;
         return Ok(ToolResult::ok(format!(
             "Changed directory to: {}",
-            std::env::current_dir()?.display()
+            new_dir.display()
         )));
     }
 
+    let cwd = tool_context::current_dir()?;
     let output = if cfg!(windows) {
         Command::new("powershell")
             .arg("-NoProfile")
             .arg("-Command")
             .arg(trimmed)
+            .current_dir(&cwd)
             .output()
             .await
             .with_context(|| format!("Failed running command: {trimmed}"))?
@@ -680,6 +687,7 @@ pub async fn execute_bash_command(command: &str) -> Result<ToolResult> {
         Command::new("sh")
             .arg("-lc")
             .arg(trimmed)
+            .current_dir(&cwd)
             .output()
             .await
             .with_context(|| format!("Failed running command: {trimmed}"))?

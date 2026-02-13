@@ -40,6 +40,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - shared confirmation operation enum (`File`, `Bash`) used across agent/UI/tool metadata
 - `src/tool_catalog.rs`
   - canonical tool metadata (schemas, confirmation mapping, UI display labels)
+- `src/tool_context.rs`
+  - shared tool execution context (project root + session working directory)
+  - central path resolution and `cd` state used by file/shell/search tools
 - `src/git_ops.rs`
   - shared `commit-and-push` workflow used by headless and inline entrypoints
 - `src/agent.rs`
