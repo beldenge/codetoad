@@ -69,6 +69,17 @@ impl GrokClient {
         self.current_model = model;
     }
 
+    pub fn reconfigure_connection(&mut self, api_key: String, base_url: String) {
+        let normalized_base_url = base_url.trim_end_matches('/').to_string();
+        let provider = detect_provider(&normalized_base_url);
+        let use_responses_api = matches!(provider, ProviderKind::Xai);
+
+        self.api_key = api_key;
+        self.base_url = normalized_base_url;
+        self.provider = provider;
+        self.use_responses_api = use_responses_api;
+    }
+
     pub fn current_model(&self) -> &str {
         &self.current_model
     }

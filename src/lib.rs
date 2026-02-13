@@ -10,6 +10,7 @@ pub mod grok_client;
 pub mod image_input;
 pub mod message_projection;
 pub mod model_client;
+pub mod onboarding;
 pub mod protocol;
 pub mod provider;
 pub mod responses_adapter;

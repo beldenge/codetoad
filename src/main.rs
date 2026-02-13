@@ -11,9 +11,10 @@ use grok_build::git_ops::{
     run_commit_and_push,
 };
 use grok_build::image_input::prepare_user_input;
+use grok_build::onboarding::run_first_time_setup;
 use grok_build::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
 use grok_build::ui::inline;
-use std::io;
+use std::io::{self, IsTerminal};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -54,6 +55,14 @@ async fn main() -> Result<()> {
     if let Some(base_url) = &cli.base_url {
         settings.update_user_base_url(base_url)?;
         println!("Saved base URL to ~/.grok/user-settings.json");
+    }
+
+    if cli.api_key.is_none()
+        && settings.get_api_key().is_none()
+        && io::stdin().is_terminal()
+        && io::stdout().is_terminal()
+    {
+        run_first_time_setup(&mut settings)?;
     }
 
     let api_key = cli

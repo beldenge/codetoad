@@ -15,6 +15,8 @@ It provides:
   - `/models`
   - `/models <name>`
   - `/resume`
+  - `/providers`
+  - `/providers add`
   - `/commit-and-push`
   - `/exit`
 - Headless prompt mode and `git commit-and-push` subcommand
@@ -39,6 +41,8 @@ Implemented now:
 - `/resume` opens an inline picker (same navigation style as model picker) to reload a saved session
 - Resume restores model/history/cwd/todo state and auto-edit/confirmation session flags
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)
+- `/providers` opens a provider picker and switches active provider in-session
+- `/providers add` runs an inline wizard to add/update provider profiles
 - File-edit and bash operations (including direct commands) require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
 - File tools and shell working-directory changes are constrained to the active project root (canonical path boundary checks with symlink-aware ancestor resolution)
 - Bash command execution includes sandbox preflight checks:
@@ -66,6 +70,7 @@ Implemented now:
   - `.grok/settings.json`
   - API key storage mode supports secure keychain (default) with plaintext fallback/override
   - Provider-aware default models based on configured base URL (`api.x.ai` vs OpenAI-compatible URLs)
+  - Provider profiles + active provider selection persisted in user settings
 - Custom instruction loading:
   - `.grok/GROK.md` (project)
   - `~/.grok/GROK.md` (global fallback)
@@ -91,8 +96,10 @@ cargo build
 Interactive:
 
 ```bash
-cargo run -- --api-key <KEY>
+cargo run --
 ```
+
+If no API key exists, the CLI starts a first-run setup wizard and stores the key in the configured storage mode (keychain by default).
 
 Headless prompt:
 
@@ -156,6 +163,8 @@ User settings are stored in `~/.grok/user-settings.json` and include:
 - `baseURL`
 - `defaultModel`
 - `models`
+- `providers`
+- `activeProvider`
 
 API key behavior:
 - Environment variable lookup order is provider-aware and based on active base URL:
@@ -167,7 +176,7 @@ API key behavior:
   - Linux Secret Service/libsecret
 - If keychain write is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
 - Set explicit mode with `--api-key-storage keychain` or `--api-key-storage plaintext`.
-- Stored keychain entry is currently shared across providers (single app credential).
+- Keychain storage is provider-scoped using separate credential accounts per provider id.
 
 Credential precedence for runtime requests:
 1. `--api-key`
@@ -179,7 +188,7 @@ Base URL behavior:
 - `--base-url` (if passed) is used and saved
 - else `GROK_BASE_URL`
 - else `OPENAI_BASE_URL`
-- else `baseURL` from `~/.grok/user-settings.json`
+- else active provider `baseURL` from `~/.grok/user-settings.json`
 - else default `https://api.x.ai/v1`
 
 ## Keychain Operations By OS
@@ -197,12 +206,12 @@ cargo run -- --api-key-storage plaintext --api-key <KEY>
 ```
 
 Inspect/remove in OS store (advanced):
-- Windows: Credential Manager -> Windows Credentials -> Generic Credentials (search for `grok-build`).
+- Windows: Credential Manager -> Windows Credentials -> Generic Credentials (search for `grok-build` and account `provider_<id>`).
 - macOS:
-  - read: `security find-generic-password -s grok-build -a xai_api_key -w`
-  - delete: `security delete-generic-password -s grok-build -a xai_api_key`
+  - read: `security find-generic-password -s grok-build -a provider_xai -w`
+  - delete: `security delete-generic-password -s grok-build -a provider_xai`
 - Linux (Secret Service/libsecret):
-  - read: `secret-tool lookup service grok-build username xai_api_key`
+  - read: `secret-tool lookup service grok-build username provider_xai`
   - clear: use your keyring UI (for example Seahorse) and remove the `grok-build` entry.
 
 Project settings are stored in `.grok/settings.json` and include:

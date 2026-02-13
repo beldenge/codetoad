@@ -91,6 +91,11 @@ impl Agent<GrokClient> {
         let client = GrokClient::new(api_key, base_url, model)?;
         Self::with_client(client, max_tool_rounds, cwd)
     }
+
+    pub fn reconfigure_provider(&mut self, api_key: String, base_url: String, model: String) {
+        self.client.reconfigure_connection(api_key, base_url);
+        self.client.set_model(model);
+    }
 }
 
 impl<C: ModelClient> Agent<C> {

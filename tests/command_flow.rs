@@ -226,6 +226,14 @@ fn slash_command_parser_and_help_are_consistent() {
         Some(ParsedSlashCommand::Resume)
     ));
     assert!(matches!(
+        parse_slash_command("/providers"),
+        Some(ParsedSlashCommand::Providers)
+    ));
+    assert!(matches!(
+        parse_slash_command("/providers add"),
+        Some(ParsedSlashCommand::AddProvider)
+    ));
+    assert!(matches!(
         parse_slash_command("/commit-and-push"),
         Some(ParsedSlashCommand::CommitAndPush)
     ));
@@ -240,6 +248,10 @@ fn slash_command_parser_and_help_are_consistent() {
     assert!(built_in.contains("/clear"));
     assert!(built_in.contains("/models"));
     assert!(built_in.contains("/exit"));
+
+    let mut providers = String::new();
+    append_help_section(&mut providers, "Provider Commands", CommandGroup::Provider);
+    assert!(providers.contains("/providers"));
 
     let mut git = String::new();
     append_help_section(&mut git, "Git Commands", CommandGroup::Git);

@@ -30,6 +30,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/cli.rs`
   - clap argument/subcommand definitions
   - includes `--api-key-storage` mode selection (`keychain` or `plaintext`)
+- `src/onboarding.rs`
+  - first-run setup wizard when no API key is configured
+  - provider profile creation/update prompts and secure key capture
 - `src/slash_commands.rs`
   - canonical slash-command metadata, parsing, and suggestion/help helpers
 - `src/ui/prompt.rs`
@@ -52,7 +55,8 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - `~/.grok/user-settings.json` and `.grok/settings.json`
   - API key retrieval precedence: provider-aware env vars (`GROK_API_KEY`/`XAI_API_KEY`/`OPENAI_API_KEY`) -> keychain (default mode) -> plaintext fallback
   - keychain-backed storage with plaintext fallback and explicit storage-mode control
-  - provider-aware defaults for model list/default model based on base URL
+  - provider profile catalog (`providers` + `activeProvider`) with migration from legacy single-provider fields
+  - provider-aware defaults for model list/default model based on active provider base URL
 - `src/provider.rs`
   - provider/base-URL detection (`xAI`, `OpenAI`, generic compatible)
   - provider default model/model-list selection and API-key env fallback order
@@ -130,6 +134,8 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `/models`
 - `/models <name>`
 - `/resume`
+- `/providers`
+- `/providers add`
 - `/commit-and-push`
 - `/exit`
 

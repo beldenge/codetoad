@@ -2,6 +2,7 @@
 pub enum CommandGroup {
     BuiltIn,
     Git,
+    Provider,
 }
 
 #[derive(Clone, Copy)]
@@ -35,12 +36,7 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         CommandGroup::BuiltIn,
         true,
     ),
-    SlashCommand::new(
-        "/clear",
-        "Clear chat history",
-        CommandGroup::BuiltIn,
-        true,
-    ),
+    SlashCommand::new("/clear", "Clear chat history", CommandGroup::BuiltIn, true),
     SlashCommand::new(
         "/models",
         "Switch between available models",
@@ -54,7 +50,24 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         false,
     ),
     SlashCommand::new("/exit", "Exit application", CommandGroup::BuiltIn, true),
-    SlashCommand::new("/resume", "Resume a saved session", CommandGroup::BuiltIn, true),
+    SlashCommand::new(
+        "/resume",
+        "Resume a saved session",
+        CommandGroup::BuiltIn,
+        true,
+    ),
+    SlashCommand::new(
+        "/providers",
+        "Switch active provider",
+        CommandGroup::Provider,
+        true,
+    ),
+    SlashCommand::new(
+        "/providers add",
+        "Add or update provider profile",
+        CommandGroup::Provider,
+        false,
+    ),
     SlashCommand::new(
         "/commit-and-push",
         "AI-generated commit and push",
@@ -69,6 +82,8 @@ pub enum ParsedSlashCommand {
     Models,
     SetModel(String),
     Resume,
+    Providers,
+    AddProvider,
     CommitAndPush,
     Exit,
 }
@@ -80,6 +95,8 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand> {
         "/clear" => Some(ParsedSlashCommand::Clear),
         "/models" => Some(ParsedSlashCommand::Models),
         "/resume" => Some(ParsedSlashCommand::Resume),
+        "/providers" => Some(ParsedSlashCommand::Providers),
+        "/providers add" => Some(ParsedSlashCommand::AddProvider),
         "/commit-and-push" => Some(ParsedSlashCommand::CommitAndPush),
         "/exit" => Some(ParsedSlashCommand::Exit),
         _ => {
@@ -141,6 +158,18 @@ mod tests {
         assert!(matches!(
             parse_slash_command("/resume"),
             Some(ParsedSlashCommand::Resume)
+        ));
+    }
+
+    #[test]
+    fn parses_provider_commands() {
+        assert!(matches!(
+            parse_slash_command("/providers"),
+            Some(ParsedSlashCommand::Providers)
+        ));
+        assert!(matches!(
+            parse_slash_command("/providers add"),
+            Some(ParsedSlashCommand::AddProvider)
         ));
     }
 }

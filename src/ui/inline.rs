@@ -6,18 +6,17 @@ use crate::git_ops::{
     run_commit_and_push as run_commit_and_push_flow,
 };
 use crate::image_input::prepare_user_input;
-use crate::ui::feedback::{
-    print_logo_and_tips, print_tool_result, prompt_tool_confirmation, tool_label,
-};
-use crate::ui::markdown::{
-    MarkdownStreamRenderer, flush_markdown_pending, stream_markdown_chunk,
-};
-use crate::ui::prompt::{read_prompt_line, select_model_inline, select_option_inline};
+use crate::onboarding::{ensure_active_provider_api_key, run_add_or_update_provider};
 use crate::session_store::{list_sessions, load_session};
 use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
 use crate::tools::ToolResult;
+use crate::ui::feedback::{
+    print_logo_and_tips, print_tool_result, prompt_tool_confirmation, tool_label,
+};
+use crate::ui::markdown::{MarkdownStreamRenderer, flush_markdown_pending, stream_markdown_chunk};
+use crate::ui::prompt::{read_prompt_line, select_model_inline, select_option_inline};
 use anyhow::Result;
 use crossterm::event::{
     self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers,
@@ -190,6 +189,55 @@ async fn handle_slash_command(command: ParsedSlashCommand, app: AppContext) -> R
             app.sync_auto_edit_from_agent().await;
             app.set_active_session_name(name.clone()).await;
             println!("Loaded session: {name}");
+        }
+        ParsedSlashCommand::Providers => {
+            let settings = app.settings();
+            let (provider_ids, current_provider) = {
+                let guard = settings.lock().await;
+                (
+                    guard
+                        .list_provider_summaries()
+                        .into_iter()
+                        .map(|summary| summary.id)
+                        .collect::<Vec<_>>(),
+                    guard.active_provider_id(),
+                )
+            };
+            let Some(selected) = select_option_inline(
+                "Switch provider",
+                &provider_ids,
+                Some(current_provider.as_str()),
+                "No provider profiles configured.",
+            )?
+            else {
+                println!("Provider switch cancelled.");
+                return Ok(());
+            };
+
+            let (api_key, base_url, model) = {
+                let mut guard = settings.lock().await;
+                guard.switch_active_provider(&selected)?;
+                ensure_active_provider_api_key(&mut guard)?;
+                let api_key = guard.get_api_key().ok_or_else(|| {
+                    anyhow::anyhow!("No API key configured for provider: {selected}")
+                })?;
+                (api_key, guard.get_base_url(), guard.get_current_model())
+            };
+
+            {
+                let agent = app.agent();
+                let mut guard = agent.lock().await;
+                guard.reconfigure_provider(api_key, base_url, model);
+            }
+            println!("Switched provider: {selected}");
+        }
+        ParsedSlashCommand::AddProvider => {
+            let settings = app.settings();
+            let provider_id = {
+                let mut guard = settings.lock().await;
+                run_add_or_update_provider(&mut guard, false)?
+            };
+            println!("Saved provider profile: {provider_id}");
         }
         ParsedSlashCommand::CommitAndPush => {
             run_commit_and_push(app.clone()).await?;
@@ -531,6 +579,8 @@ fn is_direct_command(input: &str) -> bool {
 fn help_text() -> String {
     let mut output = String::from("Grok Build Help:\n\n");
     append_help_section(&mut output, "Built-in Commands", CommandGroup::BuiltIn);
+    output.push('\n');
+    append_help_section(&mut output, "Provider Commands", CommandGroup::Provider);
     output.push('\n');
     append_help_section(&mut output, "Git Commands", CommandGroup::Git);
     output.push_str(
