@@ -95,17 +95,11 @@ async fn main() -> Result<()> {
         for warning in &prepared.warnings {
             eprintln!("warning: {warning}");
         }
+        let (message, attachments) = prepared.into_chat_request();
         let agent = app.agent();
         let mut guard = agent.lock().await;
         let output = guard
-            .process_user_message_with_attachments(
-                &prepared.text,
-                prepared
-                    .attachments
-                    .into_iter()
-                    .map(|attachment| attachment.chat_attachment)
-                    .collect(),
-            )
+            .process_user_message_with_attachments(&message, attachments)
             .await?;
         println!("{output}");
         return Ok(());

@@ -41,6 +41,12 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/image_input.rs`
   - interactive input parsing for image attachments (drag/drop paths, markdown image links, `file://` URLs)
   - image file loading/encoding with format + size validation
+  - shared conversion helpers from prepared input to model-ready attachment payloads
+- `src/message_projection.rs`
+  - shared role/content projection logic for provider payloads
+  - maps `ChatMessage` history into:
+    - OpenAI-compatible chat-completions message shape
+    - xAI Responses `input` item shape
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
   - API key retrieval precedence: provider-aware env vars (`GROK_API_KEY`/`XAI_API_KEY`/`OPENAI_API_KEY`) -> keychain (default mode) -> plaintext fallback
@@ -71,6 +77,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/protocol.rs`
   - serde request/response DTOs
   - includes multimodal user attachment shape (`ChatImageAttachment`)
+  - provides `ChatMessage` constructors to keep message assembly consistent across agent/client paths
 - `src/confirmation.rs`
   - shared confirmation operation enum (`File`, `Bash`) used across agent/UI/tool metadata
 - `src/tool_catalog.rs`

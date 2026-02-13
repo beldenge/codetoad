@@ -97,13 +97,7 @@ impl<C: ModelClient> Agent<C> {
     pub fn with_client(client: C, max_tool_rounds: usize, cwd: &Path) -> Result<Self> {
         let system_prompt = build_system_prompt(cwd);
         let tool_session = ToolSessionState::new(cwd.to_path_buf())?;
-        let messages = vec![ChatMessage {
-            role: "system".to_string(),
-            content: Some(system_prompt.clone()),
-            attachments: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }];
+        let messages = vec![ChatMessage::system(system_prompt.clone())];
 
         Ok(Self {
             client,
@@ -159,13 +153,7 @@ impl<C: ModelClient> Agent<C> {
     }
 
     pub fn reset_conversation(&mut self) {
-        self.messages = vec![ChatMessage {
-            role: "system".to_string(),
-            content: Some(self.system_prompt.clone()),
-            attachments: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }];
+        self.messages = vec![ChatMessage::system(self.system_prompt.clone())];
     }
 
     pub async fn generate_plain_text(&self, prompt: &str) -> Result<String> {
@@ -189,13 +177,7 @@ impl<C: ModelClient> Agent<C> {
     ) -> Result<()> {
         self.client.set_model(snapshot.model);
         self.messages = if snapshot.messages.is_empty() {
-            vec![ChatMessage {
-                role: "system".to_string(),
-                content: Some(self.system_prompt.clone()),
-                attachments: None,
-                tool_calls: None,
-                tool_call_id: None,
-            }]
+            vec![ChatMessage::system(self.system_prompt.clone())]
         } else {
             snapshot.messages
         };
@@ -220,17 +202,10 @@ impl<C: ModelClient> Agent<C> {
         user_message: &str,
         attachments: Vec<ChatImageAttachment>,
     ) -> Result<String> {
-        self.messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: Some(user_message.to_string()),
-            attachments: if attachments.is_empty() {
-                None
-            } else {
-                Some(attachments)
-            },
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        self.messages.push(ChatMessage::user_with_attachments(
+            user_message.to_string(),
+            attachments,
+        ));
 
         for _ in 0..self.max_tool_rounds {
             let search_mode = search_mode_for(user_message);
@@ -247,13 +222,10 @@ impl<C: ModelClient> Agent<C> {
 
             let assistant_content = message.content.clone().unwrap_or_default();
             let assistant_tool_calls = message.tool_calls.clone();
-            self.messages.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: Some(assistant_content.clone()),
-                attachments: None,
-                tool_calls: assistant_tool_calls.clone(),
-                tool_call_id: None,
-            });
+            self.messages.push(ChatMessage::assistant(
+                assistant_content.clone(),
+                assistant_tool_calls.clone(),
+            ));
 
             if let Some(tool_calls) = assistant_tool_calls {
                 for call in tool_calls {
@@ -261,13 +233,8 @@ impl<C: ModelClient> Agent<C> {
                     let result =
                         execute_tool(&call.function.name, &parsed_args, &mut self.tool_session)
                             .await;
-                    self.messages.push(ChatMessage {
-                        role: "tool".to_string(),
-                        content: Some(result.content_for_model()),
-                        attachments: None,
-                        tool_calls: None,
-                        tool_call_id: Some(call.id),
-                    });
+                    self.messages
+                        .push(ChatMessage::tool(call.id, result.content_for_model()));
                 }
                 continue;
             }
@@ -286,17 +253,10 @@ impl<C: ModelClient> Agent<C> {
         updates: mpsc::UnboundedSender<AgentEvent>,
         confirmation_rx: Option<Arc<Mutex<mpsc::UnboundedReceiver<ConfirmationDecision>>>>,
     ) -> Result<()> {
-        self.messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: Some(user_message.clone()),
-            attachments: if attachments.is_empty() {
-                None
-            } else {
-                Some(attachments)
-            },
-            tool_calls: None,
-            tool_call_id: None,
-        });
+        self.messages.push(ChatMessage::user_with_attachments(
+            user_message.clone(),
+            attachments,
+        ));
         let mut input_tokens = estimate_messages_tokens(&self.messages);
         updates.send(AgentEvent::TokenCount(input_tokens)).ok();
 
@@ -367,11 +327,9 @@ impl<C: ModelClient> Agent<C> {
                 ))
                 .ok();
 
-            self.messages.push(ChatMessage {
-                role: "assistant".to_string(),
-                content: Some(content),
-                attachments: None,
-                tool_calls: if tool_calls.is_empty() {
+            self.messages.push(ChatMessage::assistant(
+                content,
+                if tool_calls.is_empty() {
                     None
                 } else {
                     Some(
@@ -388,8 +346,7 @@ impl<C: ModelClient> Agent<C> {
                             .collect(),
                     )
                 },
-                tool_call_id: None,
-            });
+            ));
 
             if tool_calls.is_empty() {
                 updates.send(AgentEvent::Done).ok();
@@ -417,13 +374,10 @@ impl<C: ModelClient> Agent<C> {
                         .await;
                     if let Some(rejection_message) = decision {
                         let result = ToolResult::err(rejection_message);
-                        self.messages.push(ChatMessage {
-                            role: "tool".to_string(),
-                            content: Some(result.content_for_model()),
-                            attachments: None,
-                            tool_calls: None,
-                            tool_call_id: Some(tool_call.id.clone()),
-                        });
+                        self.messages.push(ChatMessage::tool(
+                            tool_call.id.clone(),
+                            result.content_for_model(),
+                        ));
                         input_tokens = estimate_messages_tokens(&self.messages);
                         updates.send(AgentEvent::TokenCount(input_tokens)).ok();
                         updates
@@ -437,13 +391,10 @@ impl<C: ModelClient> Agent<C> {
                 let result =
                     execute_tool(&tool_call.name, &parsed_args, &mut self.tool_session).await;
 
-                self.messages.push(ChatMessage {
-                    role: "tool".to_string(),
-                    content: Some(result.content_for_model()),
-                    attachments: None,
-                    tool_calls: None,
-                    tool_call_id: Some(tool_call.id.clone()),
-                });
+                self.messages.push(ChatMessage::tool(
+                    tool_call.id.clone(),
+                    result.content_for_model(),
+                ));
                 input_tokens = estimate_messages_tokens(&self.messages);
                 updates.send(AgentEvent::TokenCount(input_tokens)).ok();
 

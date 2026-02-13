@@ -1,3 +1,4 @@
+use crate::message_projection::to_responses_input;
 use crate::protocol::{
     ChatChoice, ChatCompletionMessage, ChatCompletionResponse, ChatCompletionStreamChoice,
     ChatCompletionStreamChunk, ChatCompletionStreamDelta, ChatCompletionToolCallDelta,
@@ -102,81 +103,7 @@ where
 }
 
 pub fn convert_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<Value> {
-    let mut input = Vec::new();
-
-    for message in messages {
-        match message.role.as_str() {
-            "tool" => {
-                input.push(json!({
-                    "type": "function_call_output",
-                    "call_id": message.tool_call_id.clone().unwrap_or_else(|| "call_unknown".to_string()),
-                    "output": message.content.clone().unwrap_or_default(),
-                }));
-            }
-            "assistant" => {
-                let assistant_content = responses_content_for_message(message, false);
-                if !assistant_content.is_empty() {
-                    input.push(json!({
-                        "type": "message",
-                        "role": "assistant",
-                        "content": assistant_content,
-                    }));
-                }
-                if let Some(tool_calls) = message.tool_calls.clone() {
-                    for tool_call in tool_calls {
-                        input.push(json!({
-                            "type": "function_call",
-                            "call_id": tool_call.id,
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        }));
-                    }
-                }
-            }
-            role => {
-                let content = responses_content_for_message(message, true);
-                input.push(json!({
-                    "type": "message",
-                    "role": role,
-                    "content": content,
-                }));
-            }
-        }
-    }
-
-    input
-}
-
-fn responses_content_for_message(message: &ChatMessage, include_images: bool) -> Vec<Value> {
-    let mut content = Vec::<Value>::new();
-    if let Some(text) = message.content.clone()
-        && !text.trim().is_empty()
-    {
-        content.push(json!({
-            "type": "input_text",
-            "text": text,
-        }));
-    }
-
-    if include_images
-        && message.role == "user"
-        && let Some(attachments) = &message.attachments
-    {
-        for attachment in attachments {
-            content.push(json!({
-                "type": "input_image",
-                "image_url": attachment.data_url,
-            }));
-        }
-    }
-
-    if content.is_empty() {
-        content.push(json!({
-            "type": "input_text",
-            "text": "",
-        }));
-    }
-    content
+    to_responses_input(messages)
 }
 
 pub fn flatten_tools(tools: &[ChatTool]) -> Vec<Value> {
@@ -487,17 +414,14 @@ mod tests {
 
     #[test]
     fn convert_messages_includes_user_image_attachments() {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: Some("What is shown here?".to_string()),
-            attachments: Some(vec![crate::protocol::ChatImageAttachment {
+        let messages = vec![ChatMessage::user_with_attachments(
+            "What is shown here?",
+            vec![crate::protocol::ChatImageAttachment {
                 filename: "shot.png".to_string(),
                 mime_type: "image/png".to_string(),
                 data_url: "data:image/png;base64,abc123".to_string(),
-            }]),
-            tool_calls: None,
-            tool_call_id: None,
-        }];
+            }],
+        )];
 
         let input = convert_messages_to_responses_input(&messages);
         let content = input[0]

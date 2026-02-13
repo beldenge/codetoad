@@ -1,3 +1,4 @@
+use crate::message_projection::to_chat_completions_messages;
 use crate::model_client::{ModelClient, StreamChunkHandler};
 use crate::protocol::{ChatCompletionResponse, ChatCompletionStreamChunk, ChatMessage, ChatTool};
 use crate::provider::{ProviderKind, detect_provider};
@@ -120,13 +121,7 @@ impl GrokClient {
     }
 
     pub async fn plain_completion(&self, prompt: &str) -> Result<String> {
-        let messages = vec![ChatMessage {
-            role: "user".to_string(),
-            content: Some(prompt.to_string()),
-            attachments: None,
-            tool_calls: None,
-            tool_call_id: None,
-        }];
+        let messages = vec![ChatMessage::user(prompt.to_string())];
 
         let response = self.chat(&messages, &[], SearchMode::Off).await?;
         let content = response
@@ -438,69 +433,6 @@ impl ChatCompletionsPayload {
     }
 }
 
-fn to_chat_completions_messages(messages: &[ChatMessage]) -> Vec<Value> {
-    messages
-        .iter()
-        .map(chat_message_for_chat_completions)
-        .collect()
-}
-
-fn chat_message_for_chat_completions(message: &ChatMessage) -> Value {
-    let mut object = serde_json::Map::<String, Value>::new();
-    object.insert("role".to_string(), Value::String(message.role.clone()));
-
-    if let Some(tool_calls) = &message.tool_calls
-        && let Ok(value) = serde_json::to_value(tool_calls)
-    {
-        object.insert("tool_calls".to_string(), value);
-    }
-
-    if let Some(tool_call_id) = &message.tool_call_id {
-        object.insert(
-            "tool_call_id".to_string(),
-            Value::String(tool_call_id.clone()),
-        );
-    }
-
-    let content_value = if message.role == "user" {
-        let mut parts = Vec::<Value>::new();
-        if let Some(text) = &message.content
-            && !text.trim().is_empty()
-        {
-            parts.push(json!({
-                "type": "text",
-                "text": text,
-            }));
-        }
-
-        if let Some(attachments) = &message.attachments {
-            for attachment in attachments {
-                parts.push(json!({
-                    "type": "image_url",
-                    "image_url": { "url": attachment.data_url },
-                }));
-            }
-        }
-
-        if parts.is_empty() {
-            Value::String(String::new())
-        } else if parts.len() == 1 && parts[0].get("type").and_then(Value::as_str) == Some("text") {
-            parts[0]
-                .get("text")
-                .and_then(Value::as_str)
-                .map(|text| Value::String(text.to_string()))
-                .unwrap_or_else(|| Value::Array(parts))
-        } else {
-            Value::Array(parts)
-        }
-    } else {
-        Value::String(message.content.clone().unwrap_or_default())
-    };
-    object.insert("content".to_string(), content_value);
-
-    Value::Object(object)
-}
-
 #[derive(Debug, Clone, Serialize)]
 struct ResponsesPayload {
     model: String,
@@ -596,7 +528,8 @@ impl ModelClient for GrokClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatCompletionsPayload, SearchMode, to_chat_completions_messages};
+    use super::{ChatCompletionsPayload, SearchMode};
+    use crate::message_projection::to_chat_completions_messages;
     use crate::protocol::ChatMessage;
     use crate::provider::{ProviderKind, detect_provider};
     use serde_json::Value;
@@ -605,13 +538,7 @@ mod tests {
     fn non_xai_payload_omits_search_parameters() {
         let payload = ChatCompletionsPayload::new(
             "gpt-4.1".to_string(),
-            to_chat_completions_messages(&[ChatMessage {
-                role: "user".to_string(),
-                content: Some("hello".to_string()),
-                attachments: None,
-                tool_calls: None,
-                tool_call_id: None,
-            }]),
+            to_chat_completions_messages(&[ChatMessage::user("hello")]),
             Vec::new(),
             false,
             256,
@@ -627,13 +554,7 @@ mod tests {
     fn xai_payload_includes_search_parameters() {
         let payload = ChatCompletionsPayload::new(
             "grok-4-latest".to_string(),
-            to_chat_completions_messages(&[ChatMessage {
-                role: "user".to_string(),
-                content: Some("hello".to_string()),
-                attachments: None,
-                tool_calls: None,
-                tool_call_id: None,
-            }]),
+            to_chat_completions_messages(&[ChatMessage::user("hello")]),
             Vec::new(),
             false,
             256,
@@ -658,17 +579,14 @@ mod tests {
     fn chat_completions_maps_user_image_attachments() {
         let payload = ChatCompletionsPayload::new(
             "gpt-4.1".to_string(),
-            to_chat_completions_messages(&[ChatMessage {
-                role: "user".to_string(),
-                content: Some("Describe this image".to_string()),
-                attachments: Some(vec![crate::protocol::ChatImageAttachment {
+            to_chat_completions_messages(&[ChatMessage::user_with_attachments(
+                "Describe this image",
+                vec![crate::protocol::ChatImageAttachment {
                     filename: "snap.png".to_string(),
                     mime_type: "image/png".to_string(),
                     data_url: "data:image/png;base64,abc".to_string(),
-                }]),
-                tool_calls: None,
-                tool_call_id: None,
-            }]),
+                }],
+            )]),
             Vec::new(),
             false,
             256,

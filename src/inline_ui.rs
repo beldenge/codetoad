@@ -114,34 +114,24 @@ async fn handle_input(input: &str, auto_edit_enabled: bool, app: AppContext) -> 
     }
 
     let prepared = prepare_user_input(input, app.cwd());
-    for warning in prepared.warnings {
+    for warning in &prepared.warnings {
         println!("{}", format!("warning: {warning}").yellow());
     }
-    if !prepared.attachments.is_empty() {
-        for attachment in &prepared.attachments {
-            println!(
-                "{} {}",
-                "◦".magenta(),
-                format!(
-                    "attached image: {} ({})",
-                    attachment.display_path,
-                    format_bytes(attachment.size_bytes)
-                )
-                .dark_grey()
-            );
-        }
+    for attachment in prepared.attachment_notices() {
+        println!(
+            "{} {}",
+            "◦".magenta(),
+            format!(
+                "attached image: {} ({})",
+                attachment.display_path,
+                format_bytes(attachment.size_bytes)
+            )
+            .dark_grey()
+        );
     }
 
-    stream_agent_message(
-        prepared.text,
-        prepared
-            .attachments
-            .into_iter()
-            .map(|attachment| attachment.chat_attachment)
-            .collect(),
-        app,
-    )
-    .await
+    let (message, attachments) = prepared.into_chat_request();
+    stream_agent_message(message, attachments, app).await
 }
 
 async fn handle_slash_command(command: ParsedSlashCommand, app: AppContext) -> Result<()> {

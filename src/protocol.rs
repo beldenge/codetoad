@@ -39,6 +39,65 @@ pub struct ChatMessage {
     pub tool_call_id: Option<String>,
 }
 
+impl ChatMessage {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self {
+            role: "system".to_string(),
+            content: Some(content.into()),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn user(content: impl Into<String>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(content.into()),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn user_with_attachments(
+        content: impl Into<String>,
+        attachments: Vec<ChatImageAttachment>,
+    ) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(content.into()),
+            attachments: if attachments.is_empty() {
+                None
+            } else {
+                Some(attachments)
+            },
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn assistant(content: impl Into<String>, tool_calls: Option<Vec<ChatToolCall>>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: Some(content.into()),
+            attachments: None,
+            tool_calls,
+            tool_call_id: None,
+        }
+    }
+
+    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: "tool".to_string(),
+            content: Some(content.into()),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatImageAttachment {
     pub filename: String,

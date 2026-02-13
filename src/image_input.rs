@@ -19,6 +19,34 @@ pub struct PreparedUserInput {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AttachmentNotice {
+    pub display_path: String,
+    pub size_bytes: usize,
+}
+
+impl PreparedUserInput {
+    pub fn into_chat_request(self) -> (String, Vec<ChatImageAttachment>) {
+        (
+            self.text,
+            self.attachments
+                .into_iter()
+                .map(|attachment| attachment.chat_attachment)
+                .collect(),
+        )
+    }
+
+    pub fn attachment_notices(&self) -> Vec<AttachmentNotice> {
+        self.attachments
+            .iter()
+            .map(|attachment| AttachmentNotice {
+                display_path: attachment.display_path.clone(),
+                size_bytes: attachment.size_bytes,
+            })
+            .collect()
+    }
+}
+
 pub fn prepare_user_input(raw: &str, cwd: &Path) -> PreparedUserInput {
     let text = raw.trim().to_string();
     let mut warnings = Vec::new();

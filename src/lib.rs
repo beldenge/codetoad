@@ -12,6 +12,7 @@ pub mod inline_feedback;
 pub mod inline_markdown;
 pub mod inline_prompt;
 pub mod inline_ui;
+pub mod message_projection;
 pub mod model_client;
 pub mod protocol;
 pub mod provider;
