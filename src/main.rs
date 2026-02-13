@@ -1,38 +1,17 @@
-mod agent;
-mod agent_policy;
-mod agent_stream;
-mod app_context;
-mod cli;
-mod confirmation;
-mod custom_instructions;
-mod git_ops;
-mod grok_client;
-mod inline_feedback;
-mod inline_markdown;
-mod inline_prompt;
-mod inline_ui;
-mod model_client;
-mod protocol;
-mod responses_adapter;
-mod settings;
-mod slash_commands;
-mod tool_catalog;
-mod tool_context;
-mod tools;
-
-use crate::agent::Agent;
-use crate::app_context::AppContext;
-use crate::cli::{Cli, Commands, GitCommands};
-use crate::git_ops::{
-    CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
-    run_commit_and_push,
-};
-use crate::settings::SettingsManager;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
+use grok_build::agent::Agent;
+use grok_build::app_context::AppContext;
+use grok_build::cli::{Cli, Commands, GitCommands};
+use grok_build::git_ops::{
+    CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
+    run_commit_and_push,
+};
+use grok_build::inline_ui;
+use grok_build::settings::SettingsManager;
 use std::io;
 
 #[tokio::main]
