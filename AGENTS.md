@@ -11,6 +11,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 
 - After finishing a set of changes, run:
   - `cargo clippy --all-targets --all-features -- -D warnings`
+- Never use `#[allow(...)]` attributes to bypass clippy warnings; fix the underlying issue instead.
 - Keep `README.md` up to date with real, current behavior.
 - Keep this `AGENTS.md` up to date with real agent-facing guidance.
 - Once clippy is clean and docs are updated, stage and commit the changes with a descriptive commit message, but do not push.
