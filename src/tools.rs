@@ -72,9 +72,6 @@ struct SearchOptions {
 #[derive(Debug, Clone)]
 struct SearchTextResult {
     file: String,
-    line: usize,
-    column: usize,
-    text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -403,33 +400,7 @@ async fn search_text(
             continue;
         }
 
-        let line_number = data
-            .get("line_number")
-            .and_then(Value::as_u64)
-            .map(|v| v as usize)
-            .unwrap_or(0);
-        let column = data
-            .get("submatches")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("start"))
-            .and_then(Value::as_u64)
-            .map(|v| v as usize)
-            .unwrap_or(0);
-        let text = data
-            .get("lines")
-            .and_then(|v| v.get("text"))
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-
-        results.push(SearchTextResult {
-            file,
-            line: line_number,
-            column,
-            text,
-        });
+        results.push(SearchTextResult { file });
 
         if results.len() >= max_results {
             break;
@@ -557,7 +528,6 @@ fn format_search_results(
 
     let mut match_counts: HashMap<String, usize> = HashMap::new();
     for result in text_results {
-        let _ = (result.line, result.column, &result.text);
         *match_counts.entry(result.file.clone()).or_insert(0) += 1;
     }
 

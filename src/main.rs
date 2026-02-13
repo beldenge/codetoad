@@ -1,6 +1,7 @@
 mod agent;
 mod cli;
 mod custom_instructions;
+mod git_ops;
 mod grok_client;
 mod inline_ui;
 mod protocol;
@@ -9,8 +10,11 @@ mod tools;
 
 use crate::agent::Agent;
 use crate::cli::{Cli, Commands, GitCommands};
+use crate::git_ops::{
+    CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
+    run_commit_and_push,
+};
 use crate::settings::SettingsManager;
-use crate::tools::execute_bash_command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use crossterm::event::DisableMouseCapture;
@@ -107,74 +111,42 @@ fn install_ctrlc_handler() -> Result<()> {
 
 async fn headless_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
     println!("Processing commit-and-push...");
+    let outcome = run_commit_and_push(
+        agent,
+        CommitAndPushOptions::default(),
+        |event| match event {
+            CommitAndPushEvent::NoChanges => {}
+            CommitAndPushEvent::ChangesDetected => {
+                println!("git status: changes detected");
+            }
+            CommitAndPushEvent::GeneratedMessage(message) => {
+                println!("generated commit message: \"{message}\"");
+            }
+            CommitAndPushEvent::ToolResult { step, result, .. } => {
+                if !result.success {
+                    return;
+                }
 
-    let status = execute_bash_command("git status --porcelain").await?;
-    if !status.success
-        || status
-            .output
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
-    {
+                match step {
+                    CommitAndPushStep::Add => {
+                        println!("git add: staged");
+                    }
+                    CommitAndPushStep::Commit => {
+                        println!("git commit: {}", first_line(result.output.unwrap_or_default()));
+                    }
+                    CommitAndPushStep::Push => {
+                        println!("git push: {}", first_line(result.output.unwrap_or_default()));
+                    }
+                }
+            }
+        },
+    )
+    .await?;
+
+    if matches!(outcome, CommitAndPushOutcome::NoChanges) {
         bail!("No changes to commit. Working directory is clean.");
     }
-    println!("git status: changes detected");
 
-    let add = execute_bash_command("git add .").await?;
-    if !add.success {
-        bail!("git add failed: {}", add.error.unwrap_or_default());
-    }
-    println!("git add: staged");
-
-    let diff = execute_bash_command("git diff --cached")
-        .await
-        .ok()
-        .and_then(|r| r.output)
-        .unwrap_or_default();
-
-    let prompt = format!(
-        "Generate a concise professional git commit message for these changes.\nUse conventional commit prefixes and keep under 72 chars.\nReturn only the message.\n\nGit Status:\n{}\n\nGit Diff:\n{}",
-        status.output.unwrap_or_default(),
-        diff
-    );
-    let commit_message = {
-        let guard = agent.lock().await;
-        guard.generate_plain_text(&prompt).await?
-    };
-    let clean_message = commit_message.trim().trim_matches('"').to_string();
-    if clean_message.is_empty() {
-        bail!("Failed to generate commit message");
-    }
-    println!("generated commit message: \"{clean_message}\"");
-
-    let commit_cmd = format!("git commit -m \"{}\"", clean_message.replace('"', "\\\""));
-    let commit = execute_bash_command(&commit_cmd).await?;
-    if !commit.success {
-        bail!("git commit failed: {}", commit.error.unwrap_or_default());
-    }
-    println!(
-        "git commit: {}",
-        first_line(commit.output.unwrap_or_default())
-    );
-
-    let mut push_cmd = "git push".to_string();
-    let mut push = execute_bash_command(&push_cmd).await?;
-    if !push.success
-        && push
-            .error
-            .as_deref()
-            .map(|e| e.contains("no upstream branch"))
-            .unwrap_or(false)
-    {
-        push_cmd = "git push -u origin HEAD".to_string();
-        push = execute_bash_command(&push_cmd).await?;
-    }
-
-    if !push.success {
-        bail!("git push failed: {}", push.error.unwrap_or_default());
-    }
-    println!("git push: {}", first_line(push.output.unwrap_or_default()));
     Ok(())
 }
 

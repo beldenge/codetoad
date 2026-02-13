@@ -35,6 +35,8 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - SSE stream parsing for both formats
 - `src/protocol.rs`
   - serde request/response DTOs
+- `src/git_ops.rs`
+  - shared `commit-and-push` workflow used by headless and inline entrypoints
 - `src/agent.rs`
   - ReAct-style loop and tool execution orchestration
   - session-scoped confirmation routing for file/bash operations

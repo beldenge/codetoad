@@ -1,6 +1,10 @@
 use crate::agent::{
     Agent, AgentEvent, ConfirmationDecision, ConfirmationOperation, ToolCallSummary,
 };
+use crate::git_ops::{
+    CommitAndPushEvent, CommitAndPushOptions, CommitAndPushStep,
+    run_commit_and_push as run_commit_and_push_flow,
+};
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
@@ -447,80 +451,44 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
 async fn run_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
     println!("Running commit-and-push...");
 
-    let status = execute_bash_command("git status --porcelain").await?;
-    if !status.success
-        || status
-            .output
-            .as_deref()
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
-    {
-        println!("No changes to commit.");
+    let outcome = run_commit_and_push_flow(
+        agent,
+        CommitAndPushOptions {
+            default_commit_message: Some("chore: update project files".to_string()),
+        },
+        |event| match event {
+            CommitAndPushEvent::NoChanges => {
+                println!("No changes to commit.");
+            }
+            CommitAndPushEvent::ChangesDetected => {}
+            CommitAndPushEvent::GeneratedMessage(message) => {
+                println!("Generated commit message: \"{message}\"");
+            }
+            CommitAndPushEvent::ToolResult {
+                step,
+                command,
+                result,
+            } => {
+                let id = match step {
+                    CommitAndPushStep::Add => "git_add_inline",
+                    CommitAndPushStep::Commit => "git_commit_inline",
+                    CommitAndPushStep::Push => "git_push_inline",
+                };
+                print_tool_result(
+                    ToolCallSummary {
+                        id: id.to_string(),
+                        name: "bash".to_string(),
+                        arguments: format!(r#"{{"command":"{}"}}"#, command.replace('"', "\\\"")),
+                    },
+                    result,
+                );
+            }
+        },
+    )
+    .await?;
+
+    if matches!(outcome, crate::git_ops::CommitAndPushOutcome::NoChanges) {
         return Ok(());
-    }
-
-    let add = execute_bash_command("git add .").await?;
-    print_tool_result(
-        ToolCallSummary {
-            id: "git_add_inline".to_string(),
-            name: "bash".to_string(),
-            arguments: r#"{"command":"git add ."}"#.to_string(),
-        },
-        add,
-    );
-
-    let diff = execute_bash_command("git diff --cached")
-        .await
-        .ok()
-        .and_then(|r| r.output)
-        .unwrap_or_default();
-    let prompt = format!(
-        "Generate a concise conventional commit message under 72 characters.\n\nGit Status:\n{}\n\nGit Diff:\n{}\n\nRespond with only the commit message.",
-        status.output.unwrap_or_default(),
-        diff
-    );
-
-    let message = match agent.lock().await.generate_plain_text(&prompt).await {
-        Ok(text) if !text.trim().is_empty() => text.trim().trim_matches('"').to_string(),
-        _ => "chore: update project files".to_string(),
-    };
-    println!("Generated commit message: \"{message}\"");
-
-    let commit_cmd = format!("git commit -m \"{}\"", message.replace('"', "\\\""));
-    let commit = execute_bash_command(&commit_cmd).await?;
-    let commit_success = commit.success;
-    print_tool_result(
-        ToolCallSummary {
-            id: "git_commit_inline".to_string(),
-            name: "bash".to_string(),
-            arguments: format!(r#"{{"command":"{}"}}"#, commit_cmd.replace('"', "\\\"")),
-        },
-        commit,
-    );
-
-    if commit_success {
-        let mut push_cmd = "git push".to_string();
-        let mut push = execute_bash_command(&push_cmd).await?;
-        if !push.success
-            && push
-                .error
-                .as_deref()
-                .map(|e| e.contains("no upstream branch"))
-                .unwrap_or(false)
-        {
-            push_cmd = "git push -u origin HEAD".to_string();
-            push = execute_bash_command(&push_cmd).await?;
-        }
-
-        print_tool_result(
-            ToolCallSummary {
-                id: "git_push_inline".to_string(),
-                name: "bash".to_string(),
-                arguments: format!(r#"{{"command":"{}"}}"#, push_cmd.replace('"', "\\\"")),
-            },
-            push,
-        );
     }
 
     Ok(())
