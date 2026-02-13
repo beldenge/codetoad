@@ -260,12 +260,25 @@ impl SettingsManager {
         match self.get_api_key_storage_mode() {
             ApiKeyStorageMode::Keychain => {
                 if store_api_key_in_keychain(&active_provider_id, api_key).is_ok() {
-                    if let Some(profile) = self.active_provider_profile_mut() {
-                        profile.api_key = None;
+                    let keychain_readback = load_api_key_from_keychain(&active_provider_id)
+                        .ok()
+                        .flatten()
+                        .is_some_and(|value| !value.trim().is_empty());
+                    if keychain_readback {
+                        if let Some(profile) = self.active_provider_profile_mut() {
+                            profile.api_key = None;
+                        }
+                        self.user_settings.api_key = None;
+                        self.save_user()?;
+                        Ok(ApiKeySaveLocation::Keychain)
+                    } else {
+                        if let Some(profile) = self.active_provider_profile_mut() {
+                            profile.api_key = Some(api_key.to_string());
+                        }
+                        self.sync_legacy_fields_from_active();
+                        self.save_user()?;
+                        Ok(ApiKeySaveLocation::PlaintextFallback)
                     }
-                    self.user_settings.api_key = None;
-                    self.save_user()?;
-                    Ok(ApiKeySaveLocation::Keychain)
                 } else {
                     if let Some(profile) = self.active_provider_profile_mut() {
                         profile.api_key = Some(api_key.to_string());

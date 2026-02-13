@@ -21,7 +21,11 @@ pub fn run_add_or_update_provider(
         ProviderType::Xai => "xai",
         ProviderType::OpenAiCompatible => "openai",
     };
-    let provider_id = prompt_with_default("Provider id", default_id)?;
+    let provider_id = if activate_after_add {
+        default_id.to_string()
+    } else {
+        prompt_with_default("Provider id", default_id)?
+    };
 
     let default_base_url = match provider_type {
         ProviderType::Xai => XAI_DEFAULT_BASE_URL.to_string(),

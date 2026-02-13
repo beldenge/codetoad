@@ -175,7 +175,7 @@ API key behavior:
   - Windows Credential Manager
   - macOS Keychain
   - Linux Secret Service/libsecret
-- If keychain write is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
+- If keychain write/readback is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
 - Set explicit mode with `--api-key-storage keychain` or `--api-key-storage plaintext`.
 - Keychain storage is provider-scoped using separate credential accounts per provider id.
 
