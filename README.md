@@ -22,8 +22,9 @@ Implemented now:
 - Inline-first mode with native terminal scrollback parity
 - Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
-- Inline mode shows a live spinner + elapsed seconds during thinking/tool execution and a completion duration summary
+- Inline mode shows a live spinner + elapsed seconds + approximate token count during thinking/tool execution and in completion summary
 - Inline prompt supports rich key controls (history, cursor movement, word/line deletion)
+- `Shift+Tab` toggles auto-edit mode, shown in the inline prompt status row
 - Inline prompt supports slash-command suggestions with descriptions while typing `/...`
 - `Up/Down` navigates command suggestions and `Tab/Enter` accepts the selected command
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)

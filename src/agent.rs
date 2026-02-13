@@ -21,6 +21,7 @@ pub struct ToolCallSummary {
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Content(String),
+    TokenCount(usize),
     ToolCalls(Vec<ToolCallSummary>),
     ToolResult {
         tool_call: ToolCallSummary,
@@ -160,6 +161,8 @@ impl Agent {
             tool_calls: None,
             tool_call_id: None,
         });
+        let mut input_tokens = estimate_messages_tokens(&self.messages);
+        updates.send(AgentEvent::TokenCount(input_tokens)).ok();
 
         for _ in 0..self.max_tool_rounds {
             if cancel_token.is_cancelled() {
@@ -174,6 +177,7 @@ impl Agent {
 
             let mut content = String::new();
             let mut partial_calls: Vec<PartialToolCall> = Vec::new();
+            let mut last_token_emit = std::time::Instant::now();
             let search_mode = if should_use_search_for(&user_message) {
                 SearchMode::Auto
             } else {
@@ -192,6 +196,15 @@ impl Agent {
                                 && let Some(incremental) = merge_stream_text(&mut content, &piece)
                             {
                                 updates.send(AgentEvent::Content(incremental)).ok();
+                                if last_token_emit.elapsed()
+                                    >= std::time::Duration::from_millis(250)
+                                {
+                                    let output_tokens = estimate_text_tokens(&content);
+                                    updates
+                                        .send(AgentEvent::TokenCount(input_tokens + output_tokens))
+                                        .ok();
+                                    last_token_emit = std::time::Instant::now();
+                                }
                             }
 
                             if let Some(tool_calls) = choice.delta.tool_calls {
@@ -222,6 +235,15 @@ impl Agent {
                     arguments: call.arguments,
                 })
                 .collect::<Vec<_>>();
+            let tool_call_tokens = tool_calls
+                .iter()
+                .map(|call| estimate_text_tokens(&call.arguments))
+                .sum::<usize>();
+            updates
+                .send(AgentEvent::TokenCount(
+                    input_tokens + estimate_text_tokens(&content) + tool_call_tokens,
+                ))
+                .ok();
 
             self.messages.push(ChatMessage {
                 role: "assistant".to_string(),
@@ -275,6 +297,8 @@ impl Agent {
                     tool_calls: None,
                     tool_call_id: Some(tool_call.id.clone()),
                 });
+                input_tokens = estimate_messages_tokens(&self.messages);
+                updates.send(AgentEvent::TokenCount(input_tokens)).ok();
 
                 updates
                     .send(AgentEvent::ToolResult { tool_call, result })
@@ -512,6 +536,40 @@ fn should_use_search_for(message: &str) -> bool {
         "changelog",
     ];
     keywords.iter().any(|k| lowered.contains(k))
+}
+
+fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {
+    let mut chars = 0usize;
+    for message in messages {
+        chars += message.role.chars().count();
+        if let Some(content) = &message.content {
+            chars += content.chars().count();
+        }
+        if let Some(tool_id) = &message.tool_call_id {
+            chars += tool_id.chars().count();
+        }
+        if let Some(tool_calls) = &message.tool_calls {
+            for call in tool_calls {
+                chars += call.id.chars().count();
+                chars += call.function.name.chars().count();
+                chars += call.function.arguments.chars().count();
+            }
+        }
+    }
+    estimate_chars_tokens(chars)
+}
+
+fn estimate_text_tokens(text: &str) -> usize {
+    estimate_chars_tokens(text.chars().count())
+}
+
+fn estimate_chars_tokens(char_count: usize) -> usize {
+    if char_count == 0 {
+        0
+    } else {
+        // Rough token approximation for streaming UX feedback.
+        char_count.div_ceil(4)
+    }
 }
 
 #[allow(dead_code)]

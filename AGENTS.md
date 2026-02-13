@@ -43,6 +43,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - markdown-aware streaming renderer with lightweight syntax coloring
   - tool lifecycle timeline (start/result + durations + response summary)
   - active generation cancellation via `Esc`/`Ctrl+C`
+  - live status telemetry with approximate token counts and auto-edit mode indicator
 
 ## UI Direction
 

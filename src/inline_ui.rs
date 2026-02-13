@@ -59,14 +59,17 @@ pub async fn run_inline(
     recover_terminal_state();
     print_logo_and_tips();
     let mut history: Vec<String> = Vec::new();
+    let mut auto_edit = false;
+    let mut current_model = agent.lock().await.current_model().to_string();
 
     if let Some(initial) = initial_message {
         history.push(initial.clone());
         handle_input(&initial, agent.clone(), settings.clone()).await?;
+        current_model = agent.lock().await.current_model().to_string();
     }
 
     loop {
-        let Some(input) = read_prompt_line(&history)? else {
+        let Some(input) = read_prompt_line(&history, &mut auto_edit, &current_model)? else {
             break;
         };
         let input = input.trim().to_string();
@@ -78,6 +81,7 @@ pub async fn run_inline(
         }
         history.push(input.clone());
         handle_input(&input, agent.clone(), settings.clone()).await?;
+        current_model = agent.lock().await.current_model().to_string();
     }
 
     Ok(())
@@ -191,6 +195,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     let mut tool_succeeded = 0usize;
     let mut tool_failed = 0usize;
     let mut cancel_requested = false;
+    let mut token_count = 0usize;
 
     loop {
         let event = tokio::select! {
@@ -213,11 +218,12 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                         String::new()
                     };
                     let status = format!(
-                        "{} {}{}... {}s",
+                        "{} {}{}... {}s · ↑ {} tok",
                         STATUS_FRAMES[frame_idx % STATUS_FRAMES.len()],
                         phase,
                         progress,
-                        elapsed
+                        elapsed,
+                        format_token_count(token_count)
                     );
                     frame_idx = frame_idx.wrapping_add(1);
                     render_status_line(&status, &mut status_width)?;
@@ -244,6 +250,9 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                     started_content = true;
                 }
                 stream_markdown_chunk(&mut renderer, &chunk)?;
+            }
+            AgentEvent::TokenCount(count) => {
+                token_count = count;
             }
             AgentEvent::ToolCalls(calls) => {
                 if started_content {
@@ -331,9 +340,10 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 println!(
                     "{}",
                     format!(
-                        "● completed in {}.{:01}s",
+                        "● completed in {}.{:01}s · ↑ {} tok",
                         elapsed.as_secs(),
-                        elapsed.subsec_millis() / 100
+                        elapsed.subsec_millis() / 100,
+                        format_token_count(token_count)
                     )
                     .dark_grey()
                 );
@@ -515,7 +525,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nActive Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Shift+Tab     Toggle auto-edit mode\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nActive Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\nInline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
@@ -545,6 +555,16 @@ fn format_elapsed(elapsed: std::time::Duration) -> String {
     let secs = elapsed.as_secs();
     let tenths = elapsed.subsec_millis() / 100;
     format!("{secs}.{tenths}s")
+}
+
+fn format_token_count(tokens: usize) -> String {
+    if tokens >= 1_000_000 {
+        format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else if tokens >= 1_000 {
+        format!("{:.1}k", tokens as f64 / 1_000.0)
+    } else {
+        tokens.to_string()
+    }
 }
 
 fn poll_cancel_request() -> Result<bool> {
@@ -895,7 +915,11 @@ fn is_lang_keyword(lang: &str, word: &str) -> bool {
     }
 }
 
-fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
+fn read_prompt_line(
+    history: &[String],
+    auto_edit: &mut bool,
+    current_model: &str,
+) -> Result<Option<String>> {
     enable_raw_mode()?;
     let mut input = String::new();
     let mut cursor = 0usize;
@@ -906,7 +930,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
     render_prompt_with_suggestions(
         &input,
         cursor,
-        build_command_hint(&input, selected_suggestion_idx).as_deref(),
+        build_prompt_hint(&input, selected_suggestion_idx, *auto_edit, current_model).as_deref(),
         &mut suggestions_visible,
     )?;
 
@@ -929,7 +953,8 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     ctrl_c_armed = false;
                     history_idx = None;
                     selected_suggestion_idx = 0;
-                    let hint = build_command_hint(&input, selected_suggestion_idx);
+                    let hint =
+                        build_prompt_hint(&input, selected_suggestion_idx, *auto_edit, current_model);
                     render_prompt_with_suggestions(
                         &input,
                         cursor,
@@ -943,6 +968,10 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                 print!("\r\n");
                 io::stdout().flush()?;
                 return Ok(Some(input));
+            }
+            KeyCode::BackTab => {
+                *auto_edit = !*auto_edit;
+                ctrl_c_armed = false;
             }
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if input.is_empty() {
@@ -1105,7 +1134,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
             }
         }
 
-        let hint = build_command_hint(&input, selected_suggestion_idx);
+        let hint = build_prompt_hint(&input, selected_suggestion_idx, *auto_edit, current_model);
         render_prompt_with_suggestions(
             &input,
             cursor,
@@ -1319,4 +1348,24 @@ fn build_command_hint(input: &str, selected_index: usize) -> Option<String> {
         matches[safe].0,
         matches[safe].1
     ))
+}
+
+fn build_prompt_hint(
+    input: &str,
+    selected_index: usize,
+    auto_edit: bool,
+    current_model: &str,
+) -> Option<String> {
+    let status = format!(
+        "{} auto-edit: {} (shift + tab)   ~= {}",
+        if auto_edit { "▶" } else { "⏸" },
+        if auto_edit { "on" } else { "off" },
+        current_model
+    );
+
+    if let Some(command_hint) = build_command_hint(input, selected_index) {
+        return Some(format!("{status}   |   {command_hint}"));
+    }
+
+    Some(status)
 }
