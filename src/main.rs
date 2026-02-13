@@ -1,4 +1,6 @@
 mod agent;
+mod agent_policy;
+mod agent_stream;
 mod cli;
 mod confirmation;
 mod custom_instructions;

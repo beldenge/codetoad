@@ -61,6 +61,11 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/agent.rs`
   - ReAct-style loop and tool execution orchestration
   - session-scoped confirmation routing for file/bash operations
+- `src/agent_policy.rs`
+  - agent policy/heuristics (system prompt, search-mode routing, token estimation)
+- `src/agent_stream.rs`
+  - streaming delta merge and partial tool-call assembly helpers
+  - stream merge behavior tests for duplicate/snapshot/incremental chunk handling
 - `src/tools.rs`
   - `view_file`, `create_file`, `str_replace_editor`, `bash`
   - `create_todo_list`, `update_todo_list`

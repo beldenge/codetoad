@@ -1,9 +1,10 @@
-use crate::confirmation::ConfirmationOperation;
-use crate::custom_instructions::load_custom_instructions;
-use crate::grok_client::{GrokClient, SearchMode};
-use crate::protocol::{
-    ChatCompletionToolCallDelta, ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction,
+use crate::agent_policy::{
+    build_system_prompt, estimate_messages_tokens, estimate_text_tokens, search_mode_for,
 };
+use crate::agent_stream::{PartialToolCall, accumulate_tool_calls, merge_stream_text};
+use crate::confirmation::ConfirmationOperation;
+use crate::grok_client::GrokClient;
+use crate::protocol::{ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction};
 use crate::tool_catalog::{confirmation_operation_for_tool, default_tools};
 use crate::tools::{ToolResult, execute_tool};
 use anyhow::{Context, Result};
@@ -48,13 +49,6 @@ pub enum AgentEvent {
     },
     Error(String),
     Done,
-}
-
-#[derive(Debug, Clone)]
-struct PartialToolCall {
-    id: String,
-    name: String,
-    arguments: String,
 }
 
 #[derive(Debug, Clone)]
@@ -441,172 +435,6 @@ impl Agent {
     }
 }
 
-fn accumulate_tool_calls(
-    target: &mut Vec<PartialToolCall>,
-    deltas: &[ChatCompletionToolCallDelta],
-) {
-    for delta in deltas {
-        while target.len() <= delta.index {
-            target.push(PartialToolCall {
-                id: String::new(),
-                name: String::new(),
-                arguments: String::new(),
-            });
-        }
-
-        let entry = &mut target[delta.index];
-        if let Some(id) = &delta.id {
-            entry.id.push_str(id);
-        }
-        if let Some(function) = &delta.function {
-            if let Some(name) = &function.name {
-                merge_stream_field(&mut entry.name, name);
-            }
-            if let Some(arguments) = &function.arguments {
-                merge_stream_field(&mut entry.arguments, arguments);
-            }
-        }
-
-        if entry.id.is_empty() {
-            entry.id = format!("call_{}", delta.index);
-        }
-    }
-}
-
-fn merge_stream_field(target: &mut String, delta: &str) {
-    if delta.is_empty() {
-        return;
-    }
-    if target.is_empty() {
-        target.push_str(delta);
-        return;
-    }
-
-    // Some providers emit full field values repeatedly instead of token deltas.
-    // Replace with the longer prefix form rather than duplicating content.
-    if delta.starts_with(target.as_str()) {
-        *target = delta.to_string();
-        return;
-    }
-    if target.as_str() == delta {
-        return;
-    }
-    append_with_overlap(target, delta);
-}
-
-fn merge_stream_text(target: &mut String, incoming: &str) -> Option<String> {
-    if incoming.is_empty() {
-        return None;
-    }
-    if target.is_empty() {
-        target.push_str(incoming);
-        return Some(incoming.to_string());
-    }
-
-    // Some streams send complete snapshots repeatedly instead of deltas.
-    if incoming == target.as_str() {
-        return None;
-    }
-    if incoming.starts_with(target.as_str()) {
-        let suffix = &incoming[target.len()..];
-        if suffix.is_empty() {
-            return None;
-        }
-        target.push_str(suffix);
-        return Some(suffix.to_string());
-    }
-
-    let appended = append_with_overlap(target, incoming);
-    if appended.is_empty() {
-        None
-    } else {
-        Some(appended)
-    }
-}
-
-fn append_with_overlap(target: &mut String, incoming: &str) -> String {
-    if incoming.is_empty() {
-        return String::new();
-    }
-
-    let mut overlap_len = 0usize;
-    let mut boundaries = Vec::new();
-    boundaries.push(0usize);
-    boundaries.extend(incoming.char_indices().map(|(idx, _)| idx).skip(1));
-    boundaries.push(incoming.len());
-
-    for size in boundaries.into_iter().rev() {
-        if size == 0 || size > target.len() {
-            continue;
-        }
-        if target.ends_with(&incoming[..size]) {
-            overlap_len = size;
-            break;
-        }
-    }
-
-    let suffix = &incoming[overlap_len..];
-    target.push_str(suffix);
-    suffix.to_string()
-}
-
-fn build_system_prompt(cwd: &Path) -> String {
-    let custom = load_custom_instructions(cwd)
-        .map(|instructions| {
-            format!(
-                "\n\nCUSTOM INSTRUCTIONS:\n{}\n\nFollow the custom instructions above while respecting the tool safety constraints below.\n",
-                instructions
-            )
-        })
-        .unwrap_or_default();
-
-    format!(
-        "You are Grok CLI, an AI coding assistant in a terminal environment.{custom}
-You can use these tools:
-- view_file: Read file contents or list directories.
-- create_file: Create a new file.
-- str_replace_editor: Replace text in an existing file.
-- bash: Run shell commands.
-- search: Find text and files.
-- create_todo_list: Create a todo checklist.
-- update_todo_list: Update todo checklist items.
-
-Important behavior:
-- Use view_file before editing when practical.
-- Use str_replace_editor for existing files instead of create_file.
-- Keep responses concise and directly tied to the task.
-- Use bash for file discovery and command execution when useful.
-- Use search for broad text or file discovery across the workspace.
-
-Current working directory: {}",
-        cwd.display()
-    )
-}
-
-fn search_mode_for(message: &str) -> SearchMode {
-    if should_use_search_for(message) {
-        SearchMode::Auto
-    } else {
-        SearchMode::Off
-    }
-}
-
-fn should_use_search_for(message: &str) -> bool {
-    let lowered = message.to_lowercase();
-    let keywords = [
-        "today",
-        "latest",
-        "news",
-        "trending",
-        "current",
-        "recent",
-        "price",
-        "release notes",
-        "changelog",
-    ];
-    keywords.iter().any(|k| lowered.contains(k))
-}
-
 fn parse_tool_arguments(arguments: &str) -> Value {
     serde_json::from_str::<Value>(arguments).unwrap_or_else(|_| json!({}))
 }
@@ -618,85 +446,4 @@ fn send_cancelled(updates: &mpsc::UnboundedSender<AgentEvent>) {
         ))
         .ok();
     updates.send(AgentEvent::Done).ok();
-}
-
-fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {
-    let mut chars = 0usize;
-    for message in messages {
-        chars += message.role.chars().count();
-        if let Some(content) = &message.content {
-            chars += content.chars().count();
-        }
-        if let Some(tool_id) = &message.tool_call_id {
-            chars += tool_id.chars().count();
-        }
-        if let Some(tool_calls) = &message.tool_calls {
-            for call in tool_calls {
-                chars += call.id.chars().count();
-                chars += call.function.name.chars().count();
-                chars += call.function.arguments.chars().count();
-            }
-        }
-    }
-    estimate_chars_tokens(chars)
-}
-
-fn estimate_text_tokens(text: &str) -> usize {
-    estimate_chars_tokens(text.chars().count())
-}
-
-fn estimate_chars_tokens(char_count: usize) -> usize {
-    if char_count == 0 {
-        0
-    } else {
-        // Rough token approximation for streaming UX feedback.
-        char_count.div_ceil(4)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{append_with_overlap, merge_stream_field, merge_stream_text};
-
-    #[test]
-    fn append_with_overlap_handles_suffix_overlap() {
-        let mut target = "abcdef".to_string();
-        let appended = append_with_overlap(&mut target, "defghi");
-        assert_eq!(appended, "ghi");
-        assert_eq!(target, "abcdefghi");
-    }
-
-    #[test]
-    fn merge_stream_text_ignores_duplicate_full_snapshot() {
-        let mut target = String::new();
-        assert_eq!(merge_stream_text(&mut target, "hello"), Some("hello".to_string()));
-        assert_eq!(merge_stream_text(&mut target, "hello"), None);
-        assert_eq!(target, "hello");
-    }
-
-    #[test]
-    fn merge_stream_text_emits_only_new_suffix_for_snapshots() {
-        let mut target = String::new();
-        assert_eq!(merge_stream_text(&mut target, "hello"), Some("hello".to_string()));
-        assert_eq!(
-            merge_stream_text(&mut target, "hello world"),
-            Some(" world".to_string())
-        );
-        assert_eq!(target, "hello world");
-    }
-
-    #[test]
-    fn merge_stream_field_handles_replayed_and_incremental_values() {
-        let mut target = String::new();
-        merge_stream_field(&mut target, "str_replace_editor");
-        assert_eq!(target, "str_replace_editor");
-
-        // Replayed full field should not duplicate content.
-        merge_stream_field(&mut target, "str_replace_editor");
-        assert_eq!(target, "str_replace_editor");
-
-        // Incremental suffix appends correctly.
-        merge_stream_field(&mut target, "_v2");
-        assert_eq!(target, "str_replace_editor_v2");
-    }
 }
