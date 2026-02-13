@@ -47,8 +47,8 @@ pub(crate) fn load_session(cwd: &Path, requested_name: &str) -> Result<AgentSess
 
     let payload = std::fs::read_to_string(&path)
         .with_context(|| format!("Failed reading session file {}", path.display()))?;
-    let session_file: SessionFile =
-        serde_json::from_str(&payload).with_context(|| format!("Invalid session file {}", path.display()))?;
+    let session_file: SessionFile = serde_json::from_str(&payload)
+        .with_context(|| format!("Invalid session file {}", path.display()))?;
     if session_file.version != SESSION_FILE_VERSION {
         bail!(
             "Unsupported session file version {} for {}",

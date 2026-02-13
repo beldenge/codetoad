@@ -43,7 +43,9 @@ impl ToolContext {
 
     pub(crate) fn relative_current_dir(&self) -> String {
         match self.current_dir.strip_prefix(&self.project_root) {
-            Ok(relative) if !relative.as_os_str().is_empty() => relative.to_string_lossy().to_string(),
+            Ok(relative) if !relative.as_os_str().is_empty() => {
+                relative.to_string_lossy().to_string()
+            }
             _ => ".".to_string(),
         }
     }
@@ -122,7 +124,10 @@ fn resolve_with_existing_ancestor(path: &Path) -> Result<PathBuf> {
     let mut resolved = std::fs::canonicalize(&ancestor)
         .with_context(|| format!("Failed to resolve ancestor {}", ancestor.display()))?;
     if !suffix.is_empty() && !resolved.is_dir() {
-        bail!("Cannot resolve nested path under file {}", resolved.display());
+        bail!(
+            "Cannot resolve nested path under file {}",
+            resolved.display()
+        );
     }
     for segment in suffix.iter().rev() {
         resolved.push(segment);

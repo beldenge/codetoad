@@ -7,8 +7,6 @@ pub fn run_first_time_setup(settings: &mut SettingsManager) -> Result<()> {
     println!("No API key is configured for the active provider.");
     println!("Starting first-run setup...");
     let provider_id = run_add_or_update_provider(settings, true)?;
-    settings.switch_active_provider(&provider_id)?;
-    ensure_active_provider_api_key(settings)?;
     println!("Setup complete. Active provider: {provider_id}");
     Ok(())
 }
@@ -34,7 +32,8 @@ pub fn run_add_or_update_provider(
     let model_default = default_model_for(detect_provider(&base_url));
     let model = prompt_with_default("Default model", model_default)?;
 
-    settings.add_or_update_provider(&provider_id, &base_url, Some(model), None)?;
+    let provider_id =
+        settings.add_or_update_provider(&provider_id, &base_url, Some(model), None)?;
     if activate_after_add {
         settings.switch_active_provider(&provider_id)?;
     }

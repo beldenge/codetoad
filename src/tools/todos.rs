@@ -48,7 +48,10 @@ impl TodoStore {
 }
 
 pub(super) fn execute_create_todo_list(args: &Value, store: &mut TodoStore) -> Result<ToolResult> {
-    let todos_value = args.get("todos").cloned().context("Missing 'todos' argument")?;
+    let todos_value = args
+        .get("todos")
+        .cloned()
+        .context("Missing 'todos' argument")?;
     let todos: Vec<TodoItem> =
         serde_json::from_value(todos_value).context("Invalid 'todos' argument")?;
 

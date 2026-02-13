@@ -16,7 +16,10 @@ pub(super) async fn execute_bash_tool(
     execute_bash_command(command, tool_context).await
 }
 
-pub async fn execute_bash_command(command: &str, tool_context: &mut ToolContext) -> Result<ToolResult> {
+pub async fn execute_bash_command(
+    command: &str,
+    tool_context: &mut ToolContext,
+) -> Result<ToolResult> {
     let trimmed = command.trim();
     if let Some(path) = trimmed.strip_prefix("cd ").map(str::trim) {
         return match tool_context.set_current_dir(path) {
@@ -48,7 +51,7 @@ pub async fn execute_bash_command(command: &str, tool_context: &mut ToolContext)
             Err(err) => {
                 return Ok(ToolResult::err(format!(
                     "Failed running command: {trimmed}: {err}"
-                )))
+                )));
             }
         }
     } else {
@@ -63,7 +66,7 @@ pub async fn execute_bash_command(command: &str, tool_context: &mut ToolContext)
             Err(err) => {
                 return Ok(ToolResult::err(format!(
                     "Failed running command: {trimmed}: {err}"
-                )))
+                )));
             }
         }
     };
@@ -113,7 +116,9 @@ fn validate_command_paths(command: &str, tool_context: &ToolContext) -> Result<(
                 if let Some(prefix) = prefix_before_glob(&sanitized)
                     && looks_like_path(&prefix)
                 {
-                    tool_context.resolve_path(&prefix).map_err(|err| err.to_string())?;
+                    tool_context
+                        .resolve_path(&prefix)
+                        .map_err(|err| err.to_string())?;
                 }
                 continue;
             }
@@ -150,7 +155,9 @@ fn contains_variable_path_like(command: &str) -> bool {
                 }
             }
         }
-        if ch == '%' && let Some(end) = command[i + 1..].find('%') {
+        if ch == '%'
+            && let Some(end) = command[i + 1..].find('%')
+        {
             let after = i + 1 + end + 1;
             if after < command.len() {
                 let rest = &command[after..];
@@ -297,8 +304,9 @@ mod tests {
         let root = fs::canonicalize(temp.path()).expect("canonical root");
         let context = ToolContext::new(root).expect("tool context");
 
-        let err = validate_command_paths("cat C:\\Windows\\system32\\drivers\\etc\\hosts", &context)
-            .expect_err("must reject");
+        let err =
+            validate_command_paths("cat C:\\Windows\\system32\\drivers\\etc\\hosts", &context)
+                .expect_err("must reject");
         assert!(err.contains("Path escapes project root"));
     }
 

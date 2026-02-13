@@ -2,7 +2,7 @@ use crate::provider::{
     ProviderKind, XAI_DEFAULT_BASE_URL, XAI_DEFAULT_MODEL, api_key_env_candidates,
     default_model_for, default_models_for, detect_provider,
 };
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use dirs::home_dir;
 use keyring::Entry;
 use keyring::Error as KeyringError;
@@ -362,7 +362,7 @@ impl SettingsManager {
         base_url: &str,
         default_model: Option<String>,
         models: Option<Vec<String>>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let provider_id = normalize_provider_id(provider_id)
             .ok_or_else(|| anyhow::anyhow!("Provider id cannot be empty"))?;
         let provider_kind = detect_provider(base_url);
@@ -379,24 +379,23 @@ impl SettingsManager {
         profile.models = models.or_else(|| Some(default_models_for(provider_kind)));
 
         if self.user_settings.active_provider.is_none() {
-            self.user_settings.active_provider = Some(provider_id);
+            self.user_settings.active_provider = Some(provider_id.clone());
         }
 
         self.sync_legacy_fields_from_active();
-        self.save_user()
+        self.save_user()?;
+        Ok(provider_id)
     }
 
     pub fn switch_active_provider(&mut self, provider_id: &str) -> Result<()> {
-        if !self
+        let resolved_id = self
             .user_settings
             .providers
             .as_ref()
-            .is_some_and(|providers| providers.contains_key(provider_id))
-        {
-            bail!("Unknown provider: {provider_id}");
-        }
+            .and_then(|providers| resolve_provider_id(provider_id, providers))
+            .ok_or_else(|| anyhow::anyhow!("Unknown provider: {provider_id}"))?;
 
-        self.user_settings.active_provider = Some(provider_id.to_string());
+        self.user_settings.active_provider = Some(resolved_id);
         self.project_settings.model = Some(self.active_default_model());
         self.sync_legacy_fields_from_active();
         self.save_user()?;
@@ -503,9 +502,8 @@ impl SettingsManager {
     }
 
     fn sync_legacy_fields_from_active(&mut self) {
-        if let Some((base_url, default_model, models, api_key)) = self
-            .active_provider_profile()
-            .map(|profile| {
+        if let Some((base_url, default_model, models, api_key)) =
+            self.active_provider_profile().map(|profile| {
                 (
                     profile.base_url.clone(),
                     profile.default_model.clone(),
@@ -634,6 +632,19 @@ fn normalize_provider_id(requested_id: &str) -> Option<String> {
     }
 }
 
+fn resolve_provider_id(
+    requested_id: &str,
+    providers: &BTreeMap<String, ProviderProfile>,
+) -> Option<String> {
+    let requested = requested_id.trim();
+    if providers.contains_key(requested) {
+        return Some(requested.to_string());
+    }
+
+    normalize_provider_id(requested)
+        .and_then(|normalized| providers.contains_key(&normalized).then_some(normalized))
+}
+
 fn models_match(current: &[String], defaults: &[String]) -> bool {
     if current.len() != defaults.len() {
         return false;
@@ -740,10 +751,11 @@ fn load_legacy_api_key_from_keychain() -> Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        UserSettings, default_provider_id_for, migrate_user_settings, models_match,
-        normalize_provider_id,
+        ProviderProfile, UserSettings, default_provider_id_for, migrate_user_settings,
+        models_match, normalize_provider_id, resolve_provider_id,
     };
     use crate::provider::ProviderKind;
+    use std::collections::BTreeMap;
 
     #[test]
     fn models_match_ignores_case_and_whitespace() {
@@ -784,5 +796,28 @@ mod tests {
         assert_eq!(default_provider_id_for(ProviderKind::Xai), "xai");
         assert_eq!(default_provider_id_for(ProviderKind::OpenAi), "openai");
         assert_eq!(default_provider_id_for(ProviderKind::Compatible), "default");
+    }
+
+    #[test]
+    fn resolve_provider_id_accepts_normalized_aliases() {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "xai-prod".to_string(),
+            ProviderProfile {
+                base_url: "https://api.x.ai/v1".to_string(),
+                ..ProviderProfile::default()
+            },
+        );
+
+        assert_eq!(
+            resolve_provider_id("XAI Prod", &providers),
+            Some("xai-prod".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_provider_id_returns_none_for_unknown_provider() {
+        let providers = BTreeMap::<String, ProviderProfile>::new();
+        assert_eq!(resolve_provider_id("missing", &providers), None);
     }
 }

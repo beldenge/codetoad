@@ -28,7 +28,10 @@ pub fn stream_markdown_chunk(renderer: &mut MarkdownStreamRenderer, chunk: &str)
         renderer.flushed_prefix = 0;
     }
 
-    let unflushed = renderer.pending.len().saturating_sub(renderer.flushed_prefix);
+    let unflushed = renderer
+        .pending
+        .len()
+        .saturating_sub(renderer.flushed_prefix);
     if unflushed >= STREAM_FLUSH_THRESHOLD {
         let delta = &renderer.pending[renderer.flushed_prefix..];
         print!("{delta}");
@@ -66,10 +69,7 @@ fn render_markdown_line(renderer: &mut MarkdownStreamRenderer, line: &str) -> io
             renderer.code_lang.clear();
         } else {
             renderer.in_code_block = true;
-            renderer.code_lang = trimmed
-                .trim_start_matches("```")
-                .trim()
-                .to_lowercase();
+            renderer.code_lang = trimmed.trim_start_matches("```").trim().to_lowercase();
         }
         print!("{}", line.dark_grey());
         return Ok(());
@@ -160,7 +160,8 @@ fn render_code_line(line: &str, lang: &str) -> io::Result<()> {
             word_buf.clear();
             let mut comment = ch.to_string();
             if let Some(next) = chars.peek().copied()
-                && ((comment_prefix == "//" && next == '/') || (comment_prefix == "--" && next == '-'))
+                && ((comment_prefix == "//" && next == '/')
+                    || (comment_prefix == "--" && next == '-'))
             {
                 comment.push(chars.next().unwrap_or_default());
             }
@@ -266,8 +267,7 @@ fn is_lang_keyword(lang: &str, word: &str) -> bool {
     match lang {
         "rust" | "rs" => matches!(
             word,
-            "fn"
-                | "let"
+            "fn" | "let"
                 | "mut"
                 | "pub"
                 | "struct"

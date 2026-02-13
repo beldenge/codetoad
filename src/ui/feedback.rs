@@ -20,11 +20,7 @@ pub fn print_logo_and_tips() {
 }
 
 pub fn print_tool_result(call: ToolCallSummary, result: ToolResult) {
-    println!(
-        "{} {}",
-        "●".magenta(),
-        tool_label(&call).white()
-    );
+    println!("{} {}", "●".magenta(), tool_label(&call).white());
     if result.success {
         if let Some(output) = result.output {
             for line in output.replace("\r\n", "\n").split('\n') {

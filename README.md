@@ -43,6 +43,7 @@ Implemented now:
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)
 - `/providers` opens a provider picker and switches active provider in-session
 - `/providers add` runs an inline wizard to add/update provider profiles
+  - Provider ids entered in setup are normalized for stability (trimmed, lowercased, spaces/special chars -> `-`)
 - File-edit and bash operations (including direct commands) require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
 - File tools and shell working-directory changes are constrained to the active project root (canonical path boundary checks with symlink-aware ancestor resolution)
 - Bash command execution includes sandbox preflight checks:

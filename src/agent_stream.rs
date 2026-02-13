@@ -131,7 +131,10 @@ mod tests {
     #[test]
     fn merge_stream_text_ignores_duplicate_full_snapshot() {
         let mut target = String::new();
-        assert_eq!(merge_stream_text(&mut target, "hello"), Some("hello".to_string()));
+        assert_eq!(
+            merge_stream_text(&mut target, "hello"),
+            Some("hello".to_string())
+        );
         assert_eq!(merge_stream_text(&mut target, "hello"), None);
         assert_eq!(target, "hello");
     }
@@ -139,7 +142,10 @@ mod tests {
     #[test]
     fn merge_stream_text_emits_only_new_suffix_for_snapshots() {
         let mut target = String::new();
-        assert_eq!(merge_stream_text(&mut target, "hello"), Some("hello".to_string()));
+        assert_eq!(
+            merge_stream_text(&mut target, "hello"),
+            Some("hello".to_string())
+        );
         assert_eq!(
             merge_stream_text(&mut target, "hello world"),
             Some(" world".to_string())

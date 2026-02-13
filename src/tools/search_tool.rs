@@ -42,10 +42,7 @@ struct FileSearchResult {
     score: i32,
 }
 
-pub(super) async fn execute_search(
-    args: &Value,
-    tool_context: &ToolContext,
-) -> Result<ToolResult> {
+pub(super) async fn execute_search(args: &Value, tool_context: &ToolContext) -> Result<ToolResult> {
     let options: SearchOptions =
         serde_json::from_value(args.clone()).context("Invalid search arguments")?;
     let query = options.query.trim();
@@ -312,7 +309,10 @@ fn format_search_results(
         }
     }
     if ordered_files.len() > display_limit {
-        lines.push(format!("  ... +{} more", ordered_files.len() - display_limit));
+        lines.push(format!(
+            "  ... +{} more",
+            ordered_files.len() - display_limit
+        ));
     }
 
     lines.join("\n")
