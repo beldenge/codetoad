@@ -778,11 +778,15 @@ impl ResponsesPayload {
     fn new(
         model: String,
         input: Vec<Value>,
-        tools: Vec<Value>,
+        mut tools: Vec<Value>,
         stream: bool,
         max_tokens: u32,
-        _search_mode: SearchMode,
+        search_mode: SearchMode,
     ) -> Self {
+        if matches!(search_mode, SearchMode::Auto) {
+            tools.extend(server_side_search_tools());
+        }
+
         let tool_choice = if tools.is_empty() {
             None
         } else {
@@ -797,11 +801,22 @@ impl ResponsesPayload {
             temperature: 0.7,
             max_output_tokens: max_tokens,
             stream,
-            // xAI Responses API no longer supports legacy live-search parameters.
-            // Keep this unset to avoid deprecated search path errors (HTTP 410).
+            // xAI Responses API uses built-in server-side tools for live search.
+            // Legacy search_parameters are intentionally omitted to avoid deprecation errors.
             search_parameters: None,
         }
     }
+}
+
+fn server_side_search_tools() -> Vec<Value> {
+    vec![
+        json!({
+            "type": "web_search"
+        }),
+        json!({
+            "type": "x_search"
+        }),
+    ]
 }
 
 fn validate_status(status: StatusCode, body: &str) -> Result<()> {

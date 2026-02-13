@@ -39,6 +39,7 @@ Implemented now:
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items
   - Flattens tool schema format for Responses API
+  - Adds xAI Agent Tools search (`web_search`, `x_search`) when search mode is auto
   - Parses Responses API output + streaming events back into chat/tool abstractions
 - Settings loading/saving:
   - `~/.grok/user-settings.json`
@@ -52,7 +53,6 @@ Implemented now:
 Not yet implemented:
 - MCP server integration
 - Morph fast-apply tool
-- xAI Agent Tools web-search integration (legacy live-search parameters are intentionally disabled)
 - Full TypeScript Ink UI parity details (command suggestion popup, rich markdown rendering)
 
 ## Build
