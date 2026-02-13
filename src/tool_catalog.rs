@@ -192,3 +192,50 @@ pub fn tool_display_name(name: &str) -> &'static str {
         _ => "Tool",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn default_tools_have_unique_names() {
+        let tools = default_tools();
+        let mut seen = HashSet::new();
+        for tool in tools {
+            assert!(
+                seen.insert(tool.function.name.clone()),
+                "duplicate tool name: {}",
+                tool.function.name
+            );
+        }
+    }
+
+    #[test]
+    fn confirmation_mapping_matches_expected_tools() {
+        assert_eq!(
+            confirmation_operation_for_tool(TOOL_CREATE_FILE),
+            Some(ConfirmationOperation::File)
+        );
+        assert_eq!(
+            confirmation_operation_for_tool(TOOL_STR_REPLACE_EDITOR),
+            Some(ConfirmationOperation::File)
+        );
+        assert_eq!(
+            confirmation_operation_for_tool(TOOL_BASH),
+            Some(ConfirmationOperation::Bash)
+        );
+        assert_eq!(confirmation_operation_for_tool(TOOL_VIEW_FILE), None);
+    }
+
+    #[test]
+    fn display_names_defined_for_core_tools() {
+        assert_eq!(tool_display_name(TOOL_VIEW_FILE), "Read");
+        assert_eq!(tool_display_name(TOOL_CREATE_FILE), "Create");
+        assert_eq!(tool_display_name(TOOL_STR_REPLACE_EDITOR), "Update");
+        assert_eq!(tool_display_name(TOOL_BASH), "Bash");
+        assert_eq!(tool_display_name(TOOL_SEARCH), "Search");
+        assert_eq!(tool_display_name(TOOL_CREATE_TODO_LIST), "TodoCreate");
+        assert_eq!(tool_display_name(TOOL_UPDATE_TODO_LIST), "TodoUpdate");
+    }
+}
