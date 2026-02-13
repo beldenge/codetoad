@@ -23,9 +23,12 @@ Backlog for upcoming parity and platform enhancements.
     - Linux Secret Service/libsecret
   - UX: explicit opt-in/opt-out via `--api-key-storage keychain|plaintext`.
 
-- [ ] Add provider/model compatibility beyond Grok-only usage
+- [x] Add provider/model compatibility beyond Grok-only usage
   - Goal: support additional provider-compatible models while preserving current coding-agent UX and tool loop behavior.
-  - Scope notes: normalize streaming/tool responses across provider APIs and add per-model capability handling.
+  - Implemented provider-aware base URL/model defaults and API key env fallback (`GROK_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`).
+  - Scope notes:
+    - xAI base URLs use Responses API + Grok defaults.
+    - Non-xAI OpenAI-compatible base URLs use chat-completions payloads without xAI-only `search_parameters`.
 
 - [x] Enforce project-directory sandbox for tool operations
   - Goal: prevent agent-driven file and shell operations from affecting paths outside the active project directory.

@@ -40,8 +40,12 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - tool label/target formatting used by inline orchestration
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
-  - API key retrieval precedence: `GROK_API_KEY` env -> keychain (default mode) -> plaintext fallback
+  - API key retrieval precedence: provider-aware env vars (`GROK_API_KEY`/`XAI_API_KEY`/`OPENAI_API_KEY`) -> keychain (default mode) -> plaintext fallback
   - keychain-backed storage with plaintext fallback and explicit storage-mode control
+  - provider-aware defaults for model list/default model based on base URL
+- `src/provider.rs`
+  - provider/base-URL detection (`xAI`, `OpenAI`, generic compatible)
+  - provider default model/model-list selection and API-key env fallback order
 - `src/session_store.rs`
   - session persistence helpers for saving/loading/listing `.grok/sessions/*.json`
   - validates session file version and normalizes session names
@@ -51,6 +55,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - OpenAI-compatible HTTP client
   - Uses xAI Responses API for `api.x.ai` base URLs
   - Falls back to Chat Completions format for non-xAI compatible providers
+  - Omits xAI-only chat payload fields (like `search_parameters`) for non-xAI providers
   - Enables xAI Agent Tools search (`web_search`, `x_search`) in auto search mode for Grok-4 models
   - Routes only search-enabled requests to `grok-4-latest` (or `GROK_SEARCH_MODEL`) when current model is not Grok-4
 - `src/model_client.rs`

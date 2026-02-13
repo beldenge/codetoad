@@ -13,6 +13,7 @@ pub mod inline_prompt;
 pub mod inline_ui;
 pub mod model_client;
 pub mod protocol;
+pub mod provider;
 pub mod responses_adapter;
 pub mod session_store;
 pub mod settings;

@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         .or_else(|| settings.get_api_key())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "API key required. Set GROK_API_KEY, use --api-key, or configure settings/keychain."
+                "API key required. Set GROK_API_KEY/XAI_API_KEY/OPENAI_API_KEY, use --api-key, or configure settings/keychain."
             )
         })?;
     let base_url = cli

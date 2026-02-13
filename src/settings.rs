@@ -1,3 +1,7 @@
+use crate::provider::{
+    ProviderKind, XAI_DEFAULT_BASE_URL, XAI_DEFAULT_MODEL, api_key_env_candidates,
+    default_model_for, default_models_for, detect_provider,
+};
 use anyhow::{Context, Result};
 use dirs::home_dir;
 use keyring::Entry;
@@ -7,27 +11,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const SETTINGS_VERSION: u32 = 1;
-const DEFAULT_BASE_URL: &str = "https://api.x.ai/v1";
-const DEFAULT_MODEL: &str = "grok-code-fast-1";
+const DEFAULT_BASE_URL: &str = XAI_DEFAULT_BASE_URL;
+const DEFAULT_MODEL: &str = XAI_DEFAULT_MODEL;
 const KEYRING_SERVICE: &str = "grok-build";
 const KEYRING_ACCOUNT: &str = "xai_api_key";
-
-fn default_models() -> Vec<String> {
-    vec![
-        "grok-4-1-fast-reasoning".to_string(),
-        "grok-4-1-fast-non-reasoning".to_string(),
-        "grok-4-fast-reasoning".to_string(),
-        "grok-4-fast-non-reasoning".to_string(),
-        "grok-4".to_string(),
-        "grok-4-latest".to_string(),
-        "grok-code-fast-1".to_string(),
-        "grok-3".to_string(),
-        "grok-3-latest".to_string(),
-        "grok-3-fast".to_string(),
-        "grok-3-mini".to_string(),
-        "grok-3-mini-fast".to_string(),
-    ]
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -115,11 +102,12 @@ impl SettingsManager {
             if self.user_settings.base_url.is_none() {
                 self.user_settings.base_url = Some(DEFAULT_BASE_URL.to_string());
             }
+            let provider = self.current_provider();
             if self.user_settings.default_model.is_none() {
-                self.user_settings.default_model = Some(DEFAULT_MODEL.to_string());
+                self.user_settings.default_model = Some(default_model_for(provider).to_string());
             }
             if self.user_settings.models.is_none() {
-                self.user_settings.models = Some(default_models());
+                self.user_settings.models = Some(default_models_for(provider));
             }
             if self.user_settings.api_key_storage.is_none() {
                 self.user_settings.api_key_storage = Some(ApiKeyStorageMode::Keychain);
@@ -129,7 +117,12 @@ impl SettingsManager {
 
         if !self.project_settings_path.exists() {
             if self.project_settings.model.is_none() {
-                self.project_settings.model = Some(DEFAULT_MODEL.to_string());
+                self.project_settings.model = Some(
+                    self.user_settings
+                        .default_model
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
+                );
             }
             self.save_project()?;
         }
@@ -148,10 +141,12 @@ impl SettingsManager {
     }
 
     pub fn get_api_key(&self) -> Option<String> {
-        if let Ok(from_env) = std::env::var("GROK_API_KEY")
-            && !from_env.trim().is_empty()
-        {
-            return Some(from_env);
+        for key in api_key_env_candidates(self.current_provider()) {
+            if let Ok(from_env) = std::env::var(key)
+                && !from_env.trim().is_empty()
+            {
+                return Some(from_env);
+            }
         }
 
         if self.get_api_key_storage_mode() == ApiKeyStorageMode::Keychain
@@ -167,6 +162,7 @@ impl SettingsManager {
     pub fn get_base_url(&self) -> String {
         std::env::var("GROK_BASE_URL")
             .ok()
+            .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
             .or_else(|| self.user_settings.base_url.clone())
             .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
     }
@@ -184,7 +180,7 @@ impl SettingsManager {
         self.user_settings
             .models
             .clone()
-            .unwrap_or_else(default_models)
+            .unwrap_or_else(|| default_models_for(self.current_provider()))
             .into_iter()
             .map(|m| m.trim().to_string())
             .filter(|m| !m.is_empty())
@@ -242,8 +238,52 @@ impl SettingsManager {
     }
 
     pub fn update_user_base_url(&mut self, base_url: &str) -> Result<()> {
+        let previous_provider = self.current_provider();
         self.user_settings.base_url = Some(base_url.to_string());
+        let next_provider = self.current_provider();
+
+        if previous_provider != next_provider {
+            self.maybe_update_defaults_for_provider_change(previous_provider, next_provider);
+        }
+
         self.save_user()
+    }
+
+    fn current_provider(&self) -> ProviderKind {
+        detect_provider(
+            &std::env::var("GROK_BASE_URL")
+                .ok()
+                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
+                .or_else(|| self.user_settings.base_url.clone())
+                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+        )
+    }
+
+    fn maybe_update_defaults_for_provider_change(
+        &mut self,
+        previous_provider: ProviderKind,
+        next_provider: ProviderKind,
+    ) {
+        let previous_default_model = default_model_for(previous_provider);
+        let next_default_model = default_model_for(next_provider);
+
+        if self
+            .user_settings
+            .default_model
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(|model| model == previous_default_model)
+        {
+            self.user_settings.default_model = Some(next_default_model.to_string());
+        }
+
+        let should_replace_models = match self.user_settings.models.as_ref() {
+            None => true,
+            Some(existing) => models_match(existing, &default_models_for(previous_provider)),
+        };
+        if should_replace_models {
+            self.user_settings.models = Some(default_models_for(next_provider));
+        }
     }
 }
 
@@ -251,16 +291,27 @@ fn migrate_user_settings(settings: &mut UserSettings) {
     if settings.base_url.is_none() {
         settings.base_url = Some(DEFAULT_BASE_URL.to_string());
     }
+    let provider = detect_provider(settings.base_url.as_deref().unwrap_or(DEFAULT_BASE_URL));
     if settings.default_model.is_none() {
-        settings.default_model = Some(DEFAULT_MODEL.to_string());
+        settings.default_model = Some(default_model_for(provider).to_string());
     }
     if settings.models.is_none() {
-        settings.models = Some(default_models());
+        settings.models = Some(default_models_for(provider));
     }
     if settings.api_key_storage.is_none() {
         settings.api_key_storage = Some(ApiKeyStorageMode::Keychain);
     }
     settings.settings_version = Some(SETTINGS_VERSION);
+}
+
+fn models_match(current: &[String], defaults: &[String]) -> bool {
+    if current.len() != defaults.len() {
+        return false;
+    }
+    current
+        .iter()
+        .zip(defaults)
+        .all(|(lhs, rhs)| lhs.trim().eq_ignore_ascii_case(rhs.trim()))
 }
 
 impl SettingsManager {
@@ -329,5 +380,35 @@ fn load_api_key_from_keychain() -> Result<Option<String>> {
         Ok(value) => Ok(Some(value)),
         Err(KeyringError::NoEntry) => Ok(None),
         Err(err) => Err(anyhow::anyhow!(err).context("Failed loading API key from keychain")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{UserSettings, migrate_user_settings, models_match};
+
+    #[test]
+    fn models_match_ignores_case_and_whitespace() {
+        let current = vec![" GPT-4.1 ".to_string(), "o4-mini".to_string()];
+        let defaults = vec!["gpt-4.1".to_string(), "o4-mini".to_string()];
+        assert!(models_match(&current, &defaults));
+    }
+
+    #[test]
+    fn migration_uses_provider_aware_defaults() {
+        let mut settings = UserSettings {
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            ..UserSettings::default()
+        };
+
+        migrate_user_settings(&mut settings);
+
+        assert_eq!(settings.default_model.as_deref(), Some("gpt-4.1"));
+        assert!(
+            settings
+                .models
+                .as_ref()
+                .is_some_and(|models| models.iter().any(|m| m == "gpt-4.1-mini"))
+        );
     }
 }

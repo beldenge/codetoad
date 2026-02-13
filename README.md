@@ -5,7 +5,9 @@
 Planned enhancements are tracked in `TODOS.md`.
 
 It provides:
-- xAI Responses API integration (non-deprecated path) with compatibility fallback for chat-completions-style providers
+- Provider-aware model client behavior:
+  - xAI base URLs (`api.x.ai`) use the Responses API (non-deprecated path)
+  - non-xAI OpenAI-compatible base URLs use Chat Completions payloads
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`, `search`, `create_todo_list`, `update_todo_list`)
 - Streaming terminal-native UI built with `crossterm`
 - Slash commands compatible with the TypeScript app:
@@ -61,6 +63,7 @@ Implemented now:
   - `~/.grok/user-settings.json`
   - `.grok/settings.json`
   - API key storage mode supports secure keychain (default) with plaintext fallback/override
+  - Provider-aware default models based on configured base URL (`api.x.ai` vs OpenAI-compatible URLs)
 - Custom instruction loading:
   - `.grok/GROK.md` (project)
   - `~/.grok/GROK.md` (global fallback)
@@ -128,12 +131,19 @@ User settings are stored in `~/.grok/user-settings.json` and include:
 - `models`
 
 API key behavior:
+- Environment variable lookup order is provider-aware:
+  - xAI: `GROK_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`
+  - OpenAI-compatible: `GROK_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`
 - Default mode is `keychain`, which stores/retrieves API keys from the OS credential store:
   - Windows Credential Manager
   - macOS Keychain
   - Linux Secret Service/libsecret
 - If keychain write is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
 - Set explicit mode with `--api-key-storage keychain` or `--api-key-storage plaintext`.
+
+Base URL behavior:
+- `GROK_BASE_URL` is respected first.
+- `OPENAI_BASE_URL` is also recognized for OpenAI-compatible setups.
 
 Project settings are stored in `.grok/settings.json` and include:
 - `model`

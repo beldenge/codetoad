@@ -1,5 +1,6 @@
 use crate::model_client::{ModelClient, StreamChunkHandler};
 use crate::protocol::{ChatCompletionResponse, ChatCompletionStreamChunk, ChatMessage, ChatTool};
+use crate::provider::{ProviderKind, detect_provider};
 use crate::responses_adapter::{
     convert_messages_to_responses_input, convert_responses_body_to_chat_completion, flatten_tools,
     handle_sse_event, server_side_search_tools, supports_server_side_tools,
@@ -19,6 +20,7 @@ pub struct GrokClient {
     current_model: String,
     max_tokens: u32,
     use_responses_api: bool,
+    provider: ProviderKind,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,7 +46,8 @@ impl GrokClient {
             .context("Failed building HTTP client")?;
 
         let normalized_base_url = base_url.trim_end_matches('/').to_string();
-        let use_responses_api = normalized_base_url.to_lowercase().contains("api.x.ai");
+        let provider = detect_provider(&normalized_base_url);
+        let use_responses_api = matches!(provider, ProviderKind::Xai);
 
         Ok(Self {
             http,
@@ -57,6 +60,7 @@ impl GrokClient {
                 .filter(|val| *val > 0)
                 .unwrap_or(1536),
             use_responses_api,
+            provider,
         })
     }
 
@@ -184,6 +188,7 @@ impl GrokClient {
             false,
             self.max_tokens,
             search_mode,
+            matches!(self.provider, ProviderKind::Xai),
         );
         let (status, body) = self
             .post_json(
@@ -215,12 +220,7 @@ impl GrokClient {
             search_mode,
         );
         let (status, body) = self
-            .post_json(
-                "responses",
-                &payload,
-                "responses request",
-                "responses body",
-            )
+            .post_json("responses", &payload, "responses request", "responses body")
             .await?;
         validate_status(status, &body)?;
         convert_responses_body_to_chat_completion(&body)
@@ -244,6 +244,7 @@ impl GrokClient {
             true,
             self.max_tokens,
             search_mode,
+            matches!(self.provider, ProviderKind::Xai),
         );
         let response = self
             .post_json_stream(
@@ -402,7 +403,8 @@ struct ChatCompletionsPayload {
     temperature: f32,
     max_tokens: u32,
     stream: bool,
-    search_parameters: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    search_parameters: Option<Value>,
 }
 
 impl ChatCompletionsPayload {
@@ -413,6 +415,7 @@ impl ChatCompletionsPayload {
         stream: bool,
         max_tokens: u32,
         search_mode: SearchMode,
+        include_search_parameters: bool,
     ) -> Self {
         let tool_choice = if tools.is_empty() {
             None
@@ -428,7 +431,8 @@ impl ChatCompletionsPayload {
             temperature: 0.7,
             max_tokens,
             stream,
-            search_parameters: json!({ "mode": search_mode.as_str() }),
+            search_parameters: include_search_parameters
+                .then(|| json!({ "mode": search_mode.as_str() })),
         }
     }
 }
@@ -523,5 +527,64 @@ impl ModelClient for GrokClient {
 
     async fn plain_completion(&self, prompt: &str) -> Result<String> {
         GrokClient::plain_completion(self, prompt).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChatCompletionsPayload, SearchMode};
+    use crate::protocol::ChatMessage;
+    use crate::provider::{ProviderKind, detect_provider};
+    use serde_json::Value;
+
+    #[test]
+    fn non_xai_payload_omits_search_parameters() {
+        let payload = ChatCompletionsPayload::new(
+            "gpt-4.1".to_string(),
+            vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some("hello".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            Vec::new(),
+            false,
+            256,
+            SearchMode::Auto,
+            false,
+        );
+
+        let serialized = serde_json::to_value(&payload).expect("serializes");
+        assert_eq!(serialized.get("search_parameters"), None);
+    }
+
+    #[test]
+    fn xai_payload_includes_search_parameters() {
+        let payload = ChatCompletionsPayload::new(
+            "grok-4-latest".to_string(),
+            vec![ChatMessage {
+                role: "user".to_string(),
+                content: Some("hello".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            Vec::new(),
+            false,
+            256,
+            SearchMode::Auto,
+            true,
+        );
+
+        let serialized = serde_json::to_value(&payload).expect("serializes");
+        let search = serialized
+            .get("search_parameters")
+            .and_then(Value::as_object)
+            .expect("xai payload has search params");
+        assert_eq!(search.get("mode").and_then(Value::as_str), Some("auto"));
+    }
+
+    #[test]
+    fn xai_provider_uses_responses_api_detection() {
+        assert_eq!(detect_provider("https://api.x.ai/v1"), ProviderKind::Xai);
     }
 }
