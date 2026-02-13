@@ -8,7 +8,7 @@ use crossterm::cursor::{MoveDown, MoveLeft, MoveToColumn, MoveUp};
 use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::style::Stylize;
-use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode, size};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -1317,8 +1317,9 @@ fn render_prompt_with_suggestions(
     execute!(io::stdout(), Clear(ClearType::UntilNewLine))?;
 
     if let Some(text) = suggestion {
+        let hint = fit_terminal_line(text);
         execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        print!("{}", text.dark_grey());
+        print!("{}", hint.dark_grey());
         execute!(io::stdout(), MoveUp(1))?;
         *suggestions_visible = true;
     } else if *suggestions_visible {
@@ -1339,6 +1340,27 @@ fn clear_suggestion_line(suggestions_visible: &mut bool) -> io::Result<()> {
         *suggestions_visible = false;
     }
     Ok(())
+}
+
+fn fit_terminal_line(text: &str) -> String {
+    let width = size().map(|(cols, _)| cols as usize).unwrap_or(120usize);
+    let max = width.saturating_sub(1);
+    if max == 0 {
+        return String::new();
+    }
+
+    let len = text.chars().count();
+    if len <= max {
+        return text.to_string();
+    }
+    if max == 1 {
+        return "…".to_string();
+    }
+
+    let kept = max - 1;
+    let mut clipped = text.chars().take(kept).collect::<String>();
+    clipped.push('…');
+    clipped
 }
 
 fn select_model_inline(available: &[String], current: &str) -> Result<Option<String>> {
