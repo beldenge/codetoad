@@ -83,6 +83,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - `view_file`, `create_file`, `str_replace_editor`
 - `src/tools/bash_tool.rs`
   - `bash` execution + `cd` handling under project-root constraints
+  - shell sandbox preflight policy for path-like args/redirections and dynamic path expansion patterns
 - `src/tools/todos.rs`
   - `create_todo_list`, `update_todo_list`
   - session-scoped in-memory todo store (no global static state)

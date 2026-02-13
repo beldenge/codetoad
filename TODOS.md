@@ -30,6 +30,9 @@ Backlog for upcoming parity and platform enhancements.
   - Goal: prevent agent-driven file and shell operations from affecting paths outside the active project directory.
   - Scope notes: canonicalize/resolve paths (including symlinks) and reject out-of-root access attempts for file tools and `cd`/bash execution context changes.
 
-- [ ] Harden shell sandboxing beyond working-directory boundary checks
+- [x] Harden shell sandboxing beyond working-directory boundary checks
   - Goal: reduce risk from arbitrary shell commands that can still reference absolute/out-of-root paths while running inside an in-root cwd.
-  - Scope notes: evaluate command policy enforcement and/or OS-level sandbox strategies for Windows/macOS/Linux.
+  - Implemented command preflight policy:
+    - validates path-like command arguments and redirection targets against project-root boundaries
+    - blocks dynamic path expansion patterns (`~`, `$VAR/path`, `%VAR%\\path`, `$(...)`, backticks)
+    - preserves existing `cd` handling and reports explicit sandbox-policy errors

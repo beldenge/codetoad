@@ -38,6 +38,9 @@ Implemented now:
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)
 - File-edit and bash operations (including direct commands) require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
 - File tools and shell working-directory changes are constrained to the active project root (canonical path boundary checks with symlink-aware ancestor resolution)
+- Bash command execution includes sandbox preflight checks:
+  - blocks out-of-root absolute/path-like arguments and redirection targets
+  - blocks dynamic path expansion patterns (`~`, `$VAR/path`, `%VAR%\\path`, `$(...)`, backticks)
 - Auto-edit mode bypasses confirmations for the current session
 - Inline assistant output applies markdown-aware rendering (headings, lists, inline code, fenced code blocks) with lightweight syntax coloring
 - Inline tool execution shows lifecycle timeline entries with per-tool durations and end-of-response tool summary
