@@ -100,7 +100,7 @@ Interactive:
 cargo run --
 ```
 
-If no API key exists, the CLI starts a first-run setup wizard and stores the key in the configured storage mode (keychain by default).
+If no API key exists, the CLI starts a first-run setup wizard, prompts for an API key, and stores it in the configured storage mode (keychain by default).
 
 Headless prompt:
 

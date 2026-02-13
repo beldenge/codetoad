@@ -42,14 +42,10 @@ pub fn run_add_or_update_provider(
         settings.switch_active_provider(&provider_id)?;
     }
 
-    if prompt_yes_no("Store an API key for this provider now?", true)? {
-        if activate_after_add {
-            ensure_active_provider_api_key(settings)?;
-        } else {
-            println!(
-                "Provider profile saved. Switch to it first (`/providers`) before storing a key."
-            );
-        }
+    if activate_after_add {
+        ensure_active_provider_api_key(settings)?;
+    } else {
+        println!("Provider profile saved. Switch to it first (`/providers`) before storing a key.");
     }
 
     Ok(provider_id)
@@ -97,29 +93,6 @@ fn prompt_provider_type() -> Result<ProviderType> {
             "2" => return Ok(ProviderType::OpenAiCompatible),
             _ => println!("Enter 1 or 2."),
         }
-    }
-}
-
-fn prompt_yes_no(prompt: &str, default_yes: bool) -> Result<bool> {
-    let default = if default_yes { "Y/n" } else { "y/N" };
-    loop {
-        print!("{prompt} [{default}]: ");
-        io::stdout().flush().context("Failed flushing stdout")?;
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .context("Failed reading input")?;
-        let value = input.trim().to_ascii_lowercase();
-        if value.is_empty() {
-            return Ok(default_yes);
-        }
-        if value == "y" || value == "yes" {
-            return Ok(true);
-        }
-        if value == "n" || value == "no" {
-            return Ok(false);
-        }
-        println!("Please answer yes or no.");
     }
 }
 
