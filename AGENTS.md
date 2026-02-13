@@ -53,8 +53,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 
 ## UI Direction
 
-- Runtime is inline-first for terminal-native behavior and stable scrollback.
-- `--ui tui` is deprecated and currently falls back to inline mode.
+- Runtime uses one inline UI mode for terminal-native behavior and stable scrollback.
 
 ## Slash Commands Implemented
 

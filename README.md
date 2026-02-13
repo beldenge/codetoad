@@ -73,14 +73,6 @@ Interactive:
 cargo run -- --api-key <KEY>
 ```
 
-Choose UI mode explicitly:
-
-```bash
-cargo run -- --api-key <KEY> --ui inline
-```
-
-Note: `--ui tui` is currently deprecated and falls back to inline mode.
-
 Headless prompt:
 
 ```bash
@@ -108,7 +100,6 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 --model, -m
 --prompt, -p
 --max-tool-rounds
---ui <inline|tui> (tui currently deprecated)
 ```
 
 ## Settings

@@ -8,7 +8,7 @@ mod settings;
 mod tools;
 
 use crate::agent::Agent;
-use crate::cli::{Cli, Commands, GitCommands, UiMode};
+use crate::cli::{Cli, Commands, GitCommands};
 use crate::settings::SettingsManager;
 use crate::tools::execute_bash_command;
 use anyhow::{Context, Result, bail};
@@ -91,9 +91,6 @@ async fn main() -> Result<()> {
         Some(cli.message.join(" "))
     };
 
-    if cli.ui == UiMode::Tui {
-        eprintln!("`--ui tui` is deprecated. Falling back to `--ui inline`.");
-    }
     inline_ui::run_inline(agent, settings, initial_message).await
 }
 
