@@ -39,7 +39,10 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - Falls back to Chat Completions format for non-xAI compatible providers
   - Enables xAI Agent Tools search (`web_search`, `x_search`) in auto search mode for Grok-4 models
   - Routes only search-enabled requests to `grok-4-latest` (or `GROK_SEARCH_MODEL`) when current model is not Grok-4
-  - SSE stream parsing for both formats
+- `src/responses_adapter.rs`
+  - xAI Responses API adapter and normalization logic into OpenAI-compatible structures
+  - responses SSE event parsing and tool-call/content extraction
+  - model capability helpers for server-side tools (`web_search`, `x_search`)
 - `src/protocol.rs`
   - serde request/response DTOs
 - `src/confirmation.rs`

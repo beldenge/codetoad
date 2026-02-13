@@ -8,6 +8,7 @@ mod inline_markdown;
 mod inline_prompt;
 mod inline_ui;
 mod protocol;
+mod responses_adapter;
 mod settings;
 mod slash_commands;
 mod tool_catalog;
