@@ -65,6 +65,7 @@ Implemented now:
   - Flattens tool schema format for Responses API
   - Adds xAI Agent Tools search (`web_search`, `x_search`) when search mode is auto on Grok-4 models
   - If current model is not Grok-4, search-enabled requests are routed to `grok-4-latest` (or `GROK_SEARCH_MODEL`) while non-search requests keep the selected model
+  - If image attachments are present and the selected xAI model is not image-capable, requests auto-route to `grok-4-latest` (or `GROK_IMAGE_MODEL`)
   - Parses Responses API output + streaming events back into chat/tool abstractions
 - Settings loading/saving:
   - `~/.grok/user-settings.json`
@@ -147,6 +148,10 @@ Example (xAI):
 export XAI_API_KEY=...
 cargo run -- --base-url https://api.x.ai/v1 --model grok-code-fast-1
 ```
+
+Optional xAI overrides:
+- `GROK_SEARCH_MODEL`: model used for server-side search when current model is not Grok-4 (default `grok-4-latest`)
+- `GROK_IMAGE_MODEL`: model used for image-attached prompts when current model is not image-capable (default `grok-4-latest`)
 
 Example (OpenAI-compatible):
 

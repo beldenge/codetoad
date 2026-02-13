@@ -4,7 +4,7 @@ use crate::protocol::{ChatCompletionResponse, ChatCompletionStreamChunk, ChatMes
 use crate::provider::{ProviderKind, detect_provider};
 use crate::responses_adapter::{
     convert_messages_to_responses_input, convert_responses_body_to_chat_completion, flatten_tools,
-    handle_sse_event, server_side_search_tools, supports_server_side_tools,
+    handle_sse_event, server_side_search_tools, supports_image_inputs, supports_server_side_tools,
 };
 use anyhow::{Context, Result, bail};
 use futures_util::StreamExt;
@@ -217,7 +217,7 @@ impl GrokClient {
         tools: &[ChatTool],
         search_mode: SearchMode,
     ) -> Result<ChatCompletionResponse> {
-        let model_for_request = self.responses_model_for(search_mode);
+        let model_for_request = self.responses_model_for(search_mode, has_image_inputs(messages));
         let payload = ResponsesPayload::new(
             model_for_request,
             convert_messages_to_responses_input(messages),
@@ -311,7 +311,7 @@ impl GrokClient {
     where
         F: FnMut(ChatCompletionStreamChunk) -> Result<()>,
     {
-        let model_for_request = self.responses_model_for(search_mode);
+        let model_for_request = self.responses_model_for(search_mode, has_image_inputs(messages));
         let payload = ResponsesPayload::new(
             model_for_request,
             convert_messages_to_responses_input(messages),
@@ -384,12 +384,20 @@ impl GrokClient {
         Ok(())
     }
 
-    fn responses_model_for(&self, search_mode: SearchMode) -> String {
-        if !matches!(search_mode, SearchMode::Auto) {
-            return self.current_model.clone();
+    fn responses_model_for(&self, search_mode: SearchMode, has_images: bool) -> String {
+        let mut selected_model = self.current_model.clone();
+        if has_images && !supports_image_inputs(&selected_model) {
+            selected_model = std::env::var("GROK_IMAGE_MODEL")
+                .ok()
+                .map(|raw| raw.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "grok-4-latest".to_string());
         }
-        if supports_server_side_tools(&self.current_model) {
-            return self.current_model.clone();
+        if !matches!(search_mode, SearchMode::Auto) {
+            return selected_model;
+        }
+        if supports_server_side_tools(&selected_model) {
+            return selected_model;
         }
 
         std::env::var("GROK_SEARCH_MODEL")
@@ -496,7 +504,23 @@ fn validate_status(status: StatusCode, body: &str) -> Result<()> {
     if status == StatusCode::OK {
         return Ok(());
     }
+    if body.contains("Image inputs are not supported by this model.") {
+        bail!(
+            "API returned {}: {}. Switch to an image-capable model (for xAI, try `grok-4-latest`) or set `GROK_IMAGE_MODEL`.",
+            status,
+            body
+        );
+    }
     bail!("API returned {}: {}", status, body);
+}
+
+fn has_image_inputs(messages: &[ChatMessage]) -> bool {
+    messages.iter().any(|message| {
+        message
+            .attachments
+            .as_ref()
+            .is_some_and(|items| !items.is_empty())
+    })
 }
 
 #[async_trait::async_trait]
@@ -539,7 +563,7 @@ impl ModelClient for GrokClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatCompletionsPayload, SearchMode};
+    use super::{ChatCompletionsPayload, GrokClient, SearchMode, has_image_inputs};
     use crate::message_projection::to_chat_completions_messages;
     use crate::protocol::ChatMessage;
     use crate::provider::{ProviderKind, detect_provider};
@@ -621,5 +645,47 @@ mod tests {
                 .unwrap_or_default(),
             "image_url"
         );
+    }
+
+    #[test]
+    fn responses_model_routes_image_requests_away_from_code_only_models() {
+        let client = GrokClient::new(
+            "test_key".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            "grok-code-fast-1".to_string(),
+        )
+        .expect("client creates");
+
+        let selected = client.responses_model_for(SearchMode::Off, true);
+        assert_ne!(selected, "grok-code-fast-1");
+    }
+
+    #[test]
+    fn responses_model_keeps_image_capable_model_for_image_requests() {
+        let client = GrokClient::new(
+            "test_key".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            "grok-4-latest".to_string(),
+        )
+        .expect("client creates");
+
+        let selected = client.responses_model_for(SearchMode::Off, true);
+        assert_eq!(selected, "grok-4-latest");
+    }
+
+    #[test]
+    fn image_input_detection_checks_attachments() {
+        let no_images = vec![ChatMessage::user("hello")];
+        assert!(!has_image_inputs(&no_images));
+
+        let with_image = vec![ChatMessage::user_with_attachments(
+            "describe",
+            vec![crate::protocol::ChatImageAttachment {
+                filename: "shot.png".to_string(),
+                mime_type: "image/png".to_string(),
+                data_url: "data:image/png;base64,abc".to_string(),
+            }],
+        )];
+        assert!(has_image_inputs(&with_image));
     }
 }

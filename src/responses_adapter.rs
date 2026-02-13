@@ -198,6 +198,10 @@ pub fn supports_server_side_tools(model: &str) -> bool {
     model.to_ascii_lowercase().contains("grok-4")
 }
 
+pub fn supports_image_inputs(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("grok-4")
+}
+
 pub fn server_side_search_tools() -> Vec<Value> {
     vec![
         json!({ "type": "web_search" }),
@@ -334,6 +338,13 @@ mod tests {
         assert!(supports_server_side_tools("grok-4-latest"));
         assert!(supports_server_side_tools("GROK-4"));
         assert!(!supports_server_side_tools("grok-code-fast-1"));
+    }
+
+    #[test]
+    fn supports_image_inputs_only_for_grok4_family() {
+        assert!(supports_image_inputs("grok-4-latest"));
+        assert!(supports_image_inputs("GROK-4"));
+        assert!(!supports_image_inputs("grok-code-fast-1"));
     }
 
     #[test]
