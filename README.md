@@ -22,7 +22,6 @@ It provides:
 Implemented now:
 - Interactive streaming UI
 - Inline-first mode with native terminal scrollback parity
-- Startup renders a short spinning ASCII Grok logo animation
 - Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
 - Inline mode shows a live spinner + elapsed seconds + approximate token count during thinking/tool execution and in completion summary
