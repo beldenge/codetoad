@@ -1,3 +1,4 @@
+use crate::model_client::{ModelClient, StreamChunkHandler};
 use crate::protocol::{ChatCompletionResponse, ChatCompletionStreamChunk, ChatMessage, ChatTool};
 use crate::responses_adapter::{
     convert_messages_to_responses_input, convert_responses_body_to_chat_completion, flatten_tools,
@@ -485,4 +486,42 @@ fn validate_status(status: StatusCode, body: &str) -> Result<()> {
         return Ok(());
     }
     bail!("API returned {}: {}", status, body);
+}
+
+#[async_trait::async_trait]
+impl ModelClient for GrokClient {
+    fn set_model(&mut self, model: String) {
+        GrokClient::set_model(self, model);
+    }
+
+    fn current_model(&self) -> &str {
+        GrokClient::current_model(self)
+    }
+
+    async fn chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ChatTool],
+        search_mode: SearchMode,
+    ) -> Result<ChatCompletionResponse> {
+        GrokClient::chat(self, messages, tools, search_mode).await
+    }
+
+    async fn stream_chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ChatTool],
+        search_mode: SearchMode,
+        cancel_token: &CancellationToken,
+        on_chunk: &mut StreamChunkHandler<'_>,
+    ) -> Result<()> {
+        GrokClient::stream_chat(self, messages, tools, search_mode, cancel_token, |chunk| {
+            on_chunk(chunk)
+        })
+        .await
+    }
+
+    async fn plain_completion(&self, prompt: &str) -> Result<String> {
+        GrokClient::plain_completion(self, prompt).await
+    }
 }

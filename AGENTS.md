@@ -21,6 +21,11 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/main.rs`
   - CLI entrypoint
   - inline interactive mode (default), headless prompt mode, and git subcommand routing
+- `src/lib.rs`
+  - shared library surface so integration tests can exercise agent/tool flows
+- `src/app_context.rs`
+  - shared app/runtime context (cwd, agent handle, settings handle, runtime flags)
+  - central auto-edit flag synchronization between UI runtime state and agent execution state
 - `src/cli.rs`
   - clap argument/subcommand definitions
 - `src/slash_commands.rs`
@@ -42,6 +47,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - Falls back to Chat Completions format for non-xAI compatible providers
   - Enables xAI Agent Tools search (`web_search`, `x_search`) in auto search mode for Grok-4 models
   - Routes only search-enabled requests to `grok-4-latest` (or `GROK_SEARCH_MODEL`) when current model is not Grok-4
+- `src/model_client.rs`
+  - `ModelClient` trait boundary used by `Agent` for provider abstraction
+  - stream callback type alias shared by real and fake model clients
 - `src/responses_adapter.rs`
   - xAI Responses API adapter and normalization logic into OpenAI-compatible structures
   - responses SSE event parsing and tool-call/content extraction
@@ -66,8 +74,13 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/agent_stream.rs`
   - streaming delta merge and partial tool-call assembly helpers
   - stream merge behavior tests for duplicate/snapshot/incremental chunk handling
-- `src/tools.rs`
-  - `view_file`, `create_file`, `str_replace_editor`, `bash`
+- `src/tools/mod.rs`
+  - tool dispatch + shared `ToolResult` shape
+- `src/tools/file_ops.rs`
+  - `view_file`, `create_file`, `str_replace_editor`
+- `src/tools/bash_tool.rs`
+  - `bash` execution + `cd` handling under project-root constraints
+- `src/tools/todos.rs`
   - `create_todo_list`, `update_todo_list`
 - `src/tools/search_tool.rs`
   - `search` tool execution (text/file/both modes via ripgrep)

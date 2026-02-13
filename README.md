@@ -22,6 +22,7 @@ It provides:
 Implemented now:
 - Interactive streaming UI
 - Inline-first mode with native terminal scrollback parity
+- Inline startup shows active project cwd
 - Inline mode colored output (user prompt, assistant/tool prefixes, error/result tinting)
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
 - Inline mode shows a live spinner + elapsed seconds + approximate token count during thinking/tool execution and in completion summary
@@ -40,6 +41,8 @@ Implemented now:
 - Ctrl+C in prompt clears input first; pressing Ctrl+C again on empty input exits
 - Native terminal scrollback remains visible after exit/Ctrl+C
 - Tool-calling agent loop with max tool rounds
+- Agent runtime now targets a provider trait boundary (`ModelClient`) to support fake/in-process clients in tests and future multi-provider backends
+- Tool implementations are split by domain (`file_ops`, `bash_tool`, `search_tool`, `todos`) for cleaner extension paths
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items
   - Flattens tool schema format for Responses API
@@ -54,6 +57,7 @@ Implemented now:
   - `~/.grok/GROK.md` (global fallback)
 - Direct shell command passthrough in UI (`ls`, `pwd`, `cd`, `cat`, `mkdir`, `touch`, `echo`, `grep`, `find`, `cp`, `mv`, `rm`)
 - `view_file` default preview is aligned to `grok-cli` (10 lines)
+- Integration tests cover slash-command/help consistency and streamed tool-confirmation event ordering (`tests/command_flow.rs`)
 
 Not yet implemented:
 - MCP server integration
@@ -121,4 +125,5 @@ After changes:
 
 ```bash
 cargo clippy --all-targets --all-features -- -D warnings
+cargo test
 ```

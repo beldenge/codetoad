@@ -4,7 +4,10 @@ use crate::agent_policy::{
 use crate::agent_stream::{PartialToolCall, accumulate_tool_calls, merge_stream_text};
 use crate::confirmation::ConfirmationOperation;
 use crate::grok_client::GrokClient;
-use crate::protocol::{ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction};
+use crate::model_client::ModelClient;
+use crate::protocol::{
+    ChatCompletionStreamChunk, ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction,
+};
 use crate::tool_catalog::{confirmation_operation_for_tool, default_tools};
 use crate::tools::{ToolResult, execute_tool};
 use anyhow::{Context, Result};
@@ -51,9 +54,8 @@ pub enum AgentEvent {
     Done,
 }
 
-#[derive(Debug, Clone)]
-pub struct Agent {
-    client: GrokClient,
+pub struct Agent<C: ModelClient = GrokClient> {
+    client: C,
     messages: Vec<ChatMessage>,
     system_prompt: String,
     max_tool_rounds: usize,
@@ -63,7 +65,7 @@ pub struct Agent {
     session_allow_bash_ops: bool,
 }
 
-impl Agent {
+impl Agent<GrokClient> {
     pub fn new(
         api_key: String,
         base_url: String,
@@ -72,6 +74,12 @@ impl Agent {
         cwd: &Path,
     ) -> Result<Self> {
         let client = GrokClient::new(api_key, base_url, model)?;
+        Self::with_client(client, max_tool_rounds, cwd)
+    }
+}
+
+impl<C: ModelClient> Agent<C> {
+    pub fn with_client(client: C, max_tool_rounds: usize, cwd: &Path) -> Result<Self> {
         let system_prompt = build_system_prompt(cwd);
         let messages = vec![ChatMessage {
             role: "system".to_string(),
@@ -218,35 +226,35 @@ impl Agent {
             let mut last_token_emit = std::time::Instant::now();
             let search_mode = search_mode_for(&user_message);
 
+            let mut on_chunk = |chunk: ChatCompletionStreamChunk| {
+                for choice in chunk.choices {
+                    if let Some(piece) = choice.delta.content
+                        && let Some(incremental) = merge_stream_text(&mut content, &piece)
+                    {
+                        updates.send(AgentEvent::Content(incremental)).ok();
+                        if last_token_emit.elapsed() >= std::time::Duration::from_millis(250) {
+                            let output_tokens = estimate_text_tokens(&content);
+                            updates
+                                .send(AgentEvent::TokenCount(input_tokens + output_tokens))
+                                .ok();
+                            last_token_emit = std::time::Instant::now();
+                        }
+                    }
+
+                    if let Some(tool_calls) = choice.delta.tool_calls {
+                        accumulate_tool_calls(&mut partial_calls, &tool_calls);
+                    }
+                }
+                Ok(())
+            };
+
             self.client
                 .stream_chat(
                     &self.messages,
                     &self.tools,
                     search_mode,
                     &cancel_token,
-                    |chunk| {
-                        for choice in chunk.choices {
-                            if let Some(piece) = choice.delta.content
-                                && let Some(incremental) = merge_stream_text(&mut content, &piece)
-                            {
-                                updates.send(AgentEvent::Content(incremental)).ok();
-                                if last_token_emit.elapsed()
-                                    >= std::time::Duration::from_millis(250)
-                                {
-                                    let output_tokens = estimate_text_tokens(&content);
-                                    updates
-                                        .send(AgentEvent::TokenCount(input_tokens + output_tokens))
-                                        .ok();
-                                    last_token_emit = std::time::Instant::now();
-                                }
-                            }
-
-                            if let Some(tool_calls) = choice.delta.tool_calls {
-                                accumulate_tool_calls(&mut partial_calls, &tool_calls);
-                            }
-                        }
-                        Ok(())
-                    },
+                    &mut on_chunk,
                 )
                 .await?;
 

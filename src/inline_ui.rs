@@ -1,4 +1,5 @@
-use crate::agent::{Agent, AgentEvent, ConfirmationDecision, ToolCallSummary};
+use crate::agent::{AgentEvent, ConfirmationDecision, ToolCallSummary};
+use crate::app_context::AppContext;
 use crate::confirmation::ConfirmationOperation;
 use crate::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushStep,
@@ -14,7 +15,6 @@ use crate::inline_prompt::{read_prompt_line, select_model_inline};
 use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
-use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
 use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
@@ -23,9 +23,8 @@ use crossterm::style::Stylize;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 use tokio::time::{self, Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -50,31 +49,31 @@ impl Drop for StreamRawModeGuard {
 }
 
 pub async fn run_inline(
-    agent: Arc<Mutex<Agent>>,
-    settings: Arc<Mutex<SettingsManager>>,
+    app: AppContext,
     initial_message: Option<String>,
 ) -> Result<()> {
     recover_terminal_state();
     print_logo_and_tips();
+    println!("{}", format!("cwd: {}", app.cwd().display()).dark_grey());
+    println!();
     let mut history: Vec<String> = Vec::new();
-    let mut auto_edit = false;
+    let mut auto_edit = app.auto_edit_enabled().await;
     let mut synced_auto_edit = auto_edit;
-    let mut current_model = agent.lock().await.current_model().to_string();
+    let mut current_model = app.agent().lock().await.current_model().to_string();
 
     if let Some(initial) = initial_message {
         history.push(initial.clone());
         if auto_edit != synced_auto_edit {
-            agent.lock().await.set_auto_edit_enabled(auto_edit);
+            app.set_auto_edit_enabled(auto_edit).await;
             synced_auto_edit = auto_edit;
         }
         handle_input(
             &initial,
             auto_edit,
-            agent.clone(),
-            settings.clone(),
+            app.clone(),
         )
         .await?;
-        current_model = agent.lock().await.current_model().to_string();
+        current_model = app.agent().lock().await.current_model().to_string();
     }
 
     loop {
@@ -90,17 +89,16 @@ pub async fn run_inline(
         }
         history.push(input.clone());
         if auto_edit != synced_auto_edit {
-            agent.lock().await.set_auto_edit_enabled(auto_edit);
+            app.set_auto_edit_enabled(auto_edit).await;
             synced_auto_edit = auto_edit;
         }
         handle_input(
             &input,
             auto_edit,
-            agent.clone(),
-            settings.clone(),
+            app.clone(),
         )
         .await?;
-        current_model = agent.lock().await.current_model().to_string();
+        current_model = app.agent().lock().await.current_model().to_string();
     }
 
     Ok(())
@@ -115,40 +113,40 @@ fn recover_terminal_state() {
 async fn handle_input(
     input: &str,
     auto_edit_enabled: bool,
-    agent: Arc<Mutex<Agent>>,
-    settings: Arc<Mutex<SettingsManager>>,
+    app: AppContext,
 ) -> Result<()> {
     if let Some(command) = parse_slash_command(input) {
-        return handle_slash_command(command, agent, settings).await;
+        return handle_slash_command(command, app).await;
     }
 
     if is_direct_command(input) {
-        return handle_direct_command(input, auto_edit_enabled, agent).await;
+        return handle_direct_command(input, auto_edit_enabled, app).await;
     }
 
-    stream_agent_message(input.to_string(), agent).await
+    stream_agent_message(input.to_string(), app).await
 }
 
 async fn handle_slash_command(
     command: ParsedSlashCommand,
-    agent: Arc<Mutex<Agent>>,
-    settings: Arc<Mutex<SettingsManager>>,
+    app: AppContext,
 ) -> Result<()> {
     match command {
         ParsedSlashCommand::Help => {
             println!("{}", help_text());
         }
         ParsedSlashCommand::Clear => {
-            agent.lock().await.reset_conversation();
+            app.agent().lock().await.reset_conversation();
             clear_screen();
             print_logo_and_tips();
         }
         ParsedSlashCommand::Models => {
+            let settings = app.settings();
+            let agent = app.agent();
             let available = settings.lock().await.get_available_models();
             let current = agent.lock().await.current_model().to_string();
             match select_model_inline(&available, &current)? {
                 Some(model) => {
-                    set_active_model(model, agent, settings).await?;
+                    set_active_model(model, app.clone()).await?;
                 }
                 None => {
                     println!("Model selection cancelled.");
@@ -156,27 +154,26 @@ async fn handle_slash_command(
             }
         }
         ParsedSlashCommand::SetModel(model) => {
+            let settings = app.settings();
             let available = settings.lock().await.get_available_models();
             if available.iter().any(|candidate| candidate == &model) {
-                set_active_model(model, agent, settings).await?;
+                set_active_model(model, app.clone()).await?;
             } else {
                 println!("Invalid model: {model}");
                 println!("Available: {}", available.join(", "));
             }
         }
         ParsedSlashCommand::CommitAndPush => {
-            run_commit_and_push(agent).await?;
+            run_commit_and_push(app.clone()).await?;
         }
         ParsedSlashCommand::Exit => {}
     }
     Ok(())
 }
 
-async fn set_active_model(
-    model: String,
-    agent: Arc<Mutex<Agent>>,
-    settings: Arc<Mutex<SettingsManager>>,
-) -> Result<()> {
+async fn set_active_model(model: String, app: AppContext) -> Result<()> {
+    let agent = app.agent();
+    let settings = app.settings();
     agent.lock().await.set_model(model.clone());
     settings.lock().await.update_project_model(&model)?;
     println!("Switched to model: {model}");
@@ -186,8 +183,9 @@ async fn set_active_model(
 async fn handle_direct_command(
     input: &str,
     auto_edit_enabled: bool,
-    agent: Arc<Mutex<Agent>>,
+    app: AppContext,
 ) -> Result<()> {
+    let agent = app.agent();
     let tool_call = ToolCallSummary {
         id: "bash_inline_direct".to_string(),
         name: "bash".to_string(),
@@ -225,17 +223,17 @@ async fn handle_direct_command(
     Ok(())
 }
 
-async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Result<()> {
+async fn stream_agent_message(message: String, app: AppContext) -> Result<()> {
     let _raw_guard = StreamRawModeGuard::new()?;
     let cancel_token = CancellationToken::new();
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
     let (confirm_tx, confirm_rx) = mpsc::unbounded_channel::<ConfirmationDecision>();
-    let confirm_rx = Arc::new(Mutex::new(confirm_rx));
+    let confirm_rx = std::sync::Arc::new(tokio::sync::Mutex::new(confirm_rx));
 
     let error_tx = agent_tx.clone();
     let task_cancel_token = cancel_token.clone();
     let task_confirm_rx = confirm_rx.clone();
-    let agent_for_task = agent.clone();
+    let agent_for_task = app.agent();
     tokio::spawn(async move {
         let result = agent_for_task
             .lock()
@@ -456,11 +454,11 @@ fn finalize_stream_output(
     Ok(())
 }
 
-async fn run_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
+async fn run_commit_and_push(app: AppContext) -> Result<()> {
     println!("Running commit-and-push...");
 
     let outcome = run_commit_and_push_flow(
-        agent,
+        app.agent(),
         CommitAndPushOptions {
             default_commit_message: Some("chore: update project files".to_string()),
         },

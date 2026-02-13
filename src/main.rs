@@ -1,6 +1,7 @@
 mod agent;
 mod agent_policy;
 mod agent_stream;
+mod app_context;
 mod cli;
 mod confirmation;
 mod custom_instructions;
@@ -10,6 +11,7 @@ mod inline_feedback;
 mod inline_markdown;
 mod inline_prompt;
 mod inline_ui;
+mod model_client;
 mod protocol;
 mod responses_adapter;
 mod settings;
@@ -19,6 +21,7 @@ mod tool_context;
 mod tools;
 
 use crate::agent::Agent;
+use crate::app_context::AppContext;
 use crate::cli::{Cli, Commands, GitCommands};
 use crate::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
@@ -31,8 +34,6 @@ use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
 use std::io;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,25 +76,23 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var("GROK_MODEL").ok())
         .unwrap_or_else(|| settings.get_current_model());
 
-    let settings = Arc::new(Mutex::new(settings));
-    let agent = Arc::new(Mutex::new(Agent::new(
-        api_key,
-        base_url,
-        model,
-        cli.max_tool_rounds,
-        &cwd,
-    )?));
+    let app = AppContext::new(
+        cwd.clone(),
+        Agent::new(api_key, base_url, model, cli.max_tool_rounds, &cwd)?,
+        settings,
+    );
 
     if let Some(Commands::Git { command }) = cli.command {
         match command {
             GitCommands::CommitAndPush => {
-                headless_commit_and_push(agent).await?;
+                headless_commit_and_push(app.clone()).await?;
                 return Ok(());
             }
         }
     }
 
     if let Some(prompt) = cli.prompt {
+        let agent = app.agent();
         let mut guard = agent.lock().await;
         let output = guard.process_user_message(&prompt).await?;
         println!("{output}");
@@ -106,7 +105,7 @@ async fn main() -> Result<()> {
         Some(cli.message.join(" "))
     };
 
-    inline_ui::run_inline(agent, settings, initial_message).await
+    inline_ui::run_inline(app, initial_message).await
 }
 
 fn install_ctrlc_handler() -> Result<()> {
@@ -120,10 +119,10 @@ fn install_ctrlc_handler() -> Result<()> {
     .context("Failed to install Ctrl+C handler")
 }
 
-async fn headless_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
+async fn headless_commit_and_push(app: AppContext) -> Result<()> {
     println!("Processing commit-and-push...");
     let outcome = run_commit_and_push(
-        agent,
+        app.agent(),
         CommitAndPushOptions::default(),
         |event| match event {
             CommitAndPushEvent::NoChanges => {}
