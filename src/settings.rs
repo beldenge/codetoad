@@ -271,11 +271,7 @@ impl SettingsManager {
         match self.get_api_key_storage_mode() {
             ApiKeyStorageMode::Keychain => {
                 if store_api_key_in_keychain(&active_provider_id, api_key).is_ok() {
-                    let keychain_readback = load_api_key_from_keychain(&active_provider_id)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|value| !value.trim().is_empty());
-                    if keychain_readback {
+                    if keychain_has_api_key(&active_provider_id) {
                         self.clear_plaintext_api_key_for_active();
                         self.session_api_keys.remove(&active_provider_id);
                         self.save_user()?;
@@ -698,10 +694,7 @@ impl SettingsManager {
         };
 
         let migrated = store_api_key_in_keychain(&provider_id, &api_key).is_ok()
-            && load_api_key_from_keychain(&provider_id)
-                .ok()
-                .flatten()
-                .is_some_and(|value| !value.trim().is_empty());
+            && keychain_has_api_key(&provider_id);
 
         self.clear_plaintext_api_key_for_active();
         if migrated {
@@ -759,7 +752,32 @@ fn store_api_key_in_keychain(provider_id: &str, api_key: &str) -> Result<()> {
     let entry = keyring_entry(&account).context("Failed opening keychain entry")?;
     entry
         .set_password(api_key)
-        .context("Failed storing API key in keychain")
+        .context("Failed storing API key in keychain")?;
+
+    if normalize_provider_id(provider_id).as_deref() == Some("xai") {
+        let legacy =
+            keyring_entry(LEGACY_KEYRING_ACCOUNT).context("Failed opening keychain entry")?;
+        legacy
+            .set_password(api_key)
+            .context("Failed storing API key in keychain")?;
+    }
+
+    Ok(())
+}
+
+fn keychain_has_api_key(provider_id: &str) -> bool {
+    let provider_has_key = load_api_key_from_keychain(provider_id)
+        .ok()
+        .flatten()
+        .is_some_and(|value| !value.trim().is_empty());
+    if provider_has_key {
+        return true;
+    }
+    normalize_provider_id(provider_id).as_deref() == Some("xai")
+        && load_legacy_api_key_from_keychain()
+            .ok()
+            .flatten()
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn load_api_key_from_keychain(provider_id: &str) -> Result<Option<String>> {
