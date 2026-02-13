@@ -122,6 +122,23 @@ impl Agent {
         }
     }
 
+    pub fn is_operation_auto_approved(&self, operation: ConfirmationOperation) -> bool {
+        if self.auto_edit_enabled {
+            return true;
+        }
+        match operation {
+            ConfirmationOperation::File => self.session_allow_file_ops,
+            ConfirmationOperation::Bash => self.session_allow_bash_ops,
+        }
+    }
+
+    pub fn remember_operation_for_session(&mut self, operation: ConfirmationOperation) {
+        match operation {
+            ConfirmationOperation::File => self.session_allow_file_ops = true,
+            ConfirmationOperation::Bash => self.session_allow_bash_ops = true,
+        }
+    }
+
     pub fn reset_conversation(&mut self) {
         self.messages = vec![ChatMessage {
             role: "system".to_string(),

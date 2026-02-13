@@ -63,22 +63,17 @@ pub async fn run_inline(
     let mut history: Vec<String> = Vec::new();
     let mut auto_edit = false;
     let mut synced_auto_edit = auto_edit;
-    let mut direct_bash_allow_session = false;
     let mut current_model = agent.lock().await.current_model().to_string();
 
     if let Some(initial) = initial_message {
         history.push(initial.clone());
         if auto_edit != synced_auto_edit {
             agent.lock().await.set_auto_edit_enabled(auto_edit);
-            if !auto_edit {
-                direct_bash_allow_session = false;
-            }
             synced_auto_edit = auto_edit;
         }
         handle_input(
             &initial,
             auto_edit,
-            &mut direct_bash_allow_session,
             agent.clone(),
             settings.clone(),
         )
@@ -100,15 +95,11 @@ pub async fn run_inline(
         history.push(input.clone());
         if auto_edit != synced_auto_edit {
             agent.lock().await.set_auto_edit_enabled(auto_edit);
-            if !auto_edit {
-                direct_bash_allow_session = false;
-            }
             synced_auto_edit = auto_edit;
         }
         handle_input(
             &input,
             auto_edit,
-            &mut direct_bash_allow_session,
             agent.clone(),
             settings.clone(),
         )
@@ -128,7 +119,6 @@ fn recover_terminal_state() {
 async fn handle_input(
     input: &str,
     auto_edit_enabled: bool,
-    direct_bash_allow_session: &mut bool,
     agent: Arc<Mutex<Agent>>,
     settings: Arc<Mutex<SettingsManager>>,
 ) -> Result<()> {
@@ -185,14 +175,23 @@ async fn handle_input(
             arguments: format!(r#"{{"command":"{}"}}"#, input.replace('"', "\\\"")),
         };
 
-        if !auto_edit_enabled && !*direct_bash_allow_session {
+        let auto_approved = {
+            agent
+                .lock()
+                .await
+                .is_operation_auto_approved(ConfirmationOperation::Bash)
+        };
+        if !auto_edit_enabled && !auto_approved {
             match prompt_tool_confirmation(&tool_call, ConfirmationOperation::Bash)? {
                 ConfirmationDecision::Approve {
                     remember_for_session,
                     ..
                 } => {
                     if remember_for_session {
-                        *direct_bash_allow_session = true;
+                        agent
+                            .lock()
+                            .await
+                            .remember_operation_for_session(ConfirmationOperation::Bash);
                     }
                 }
                 ConfirmationDecision::Reject { .. } => {
