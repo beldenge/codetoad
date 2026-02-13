@@ -2,12 +2,20 @@ use crate::confirmation::ConfirmationOperation;
 use crate::protocol::{ChatTool, ChatToolFunction};
 use serde_json::json;
 
+pub const TOOL_VIEW_FILE: &str = "view_file";
+pub const TOOL_CREATE_FILE: &str = "create_file";
+pub const TOOL_STR_REPLACE_EDITOR: &str = "str_replace_editor";
+pub const TOOL_BASH: &str = "bash";
+pub const TOOL_SEARCH: &str = "search";
+pub const TOOL_CREATE_TODO_LIST: &str = "create_todo_list";
+pub const TOOL_UPDATE_TODO_LIST: &str = "update_todo_list";
+
 pub fn default_tools() -> Vec<ChatTool> {
     vec![
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "view_file".to_string(),
+                name: TOOL_VIEW_FILE.to_string(),
                 description: "View contents of a file or list directory contents".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -23,7 +31,7 @@ pub fn default_tools() -> Vec<ChatTool> {
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "create_file".to_string(),
+                name: TOOL_CREATE_FILE.to_string(),
                 description: "Create a new file with specified content".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -38,7 +46,7 @@ pub fn default_tools() -> Vec<ChatTool> {
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "str_replace_editor".to_string(),
+                name: TOOL_STR_REPLACE_EDITOR.to_string(),
                 description: "Replace text in an existing file".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -55,7 +63,7 @@ pub fn default_tools() -> Vec<ChatTool> {
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "bash".to_string(),
+                name: TOOL_BASH.to_string(),
                 description: "Execute a shell command".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -69,7 +77,7 @@ pub fn default_tools() -> Vec<ChatTool> {
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "search".to_string(),
+                name: TOOL_SEARCH.to_string(),
                 description: "Unified search for text content and files".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -100,7 +108,7 @@ pub fn default_tools() -> Vec<ChatTool> {
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "create_todo_list".to_string(),
+                name: TOOL_CREATE_TODO_LIST.to_string(),
                 description: "Create a new todo list for planning and tracking tasks".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -132,7 +140,7 @@ pub fn default_tools() -> Vec<ChatTool> {
         ChatTool {
             r#type: "function".to_string(),
             function: ChatToolFunction {
-                name: "update_todo_list".to_string(),
+                name: TOOL_UPDATE_TODO_LIST.to_string(),
                 description: "Update existing todo items".to_string(),
                 parameters: json!({
                     "type": "object",
@@ -166,21 +174,21 @@ pub fn default_tools() -> Vec<ChatTool> {
 
 pub fn confirmation_operation_for_tool(tool_name: &str) -> Option<ConfirmationOperation> {
     match tool_name {
-        "create_file" | "str_replace_editor" => Some(ConfirmationOperation::File),
-        "bash" => Some(ConfirmationOperation::Bash),
+        TOOL_CREATE_FILE | TOOL_STR_REPLACE_EDITOR => Some(ConfirmationOperation::File),
+        TOOL_BASH => Some(ConfirmationOperation::Bash),
         _ => None,
     }
 }
 
 pub fn tool_display_name(name: &str) -> &'static str {
     match name {
-        "view_file" => "Read",
-        "str_replace_editor" => "Update",
-        "create_file" => "Create",
-        "bash" => "Bash",
-        "search" => "Search",
-        "create_todo_list" => "TodoCreate",
-        "update_todo_list" => "TodoUpdate",
+        TOOL_VIEW_FILE => "Read",
+        TOOL_STR_REPLACE_EDITOR => "Update",
+        TOOL_CREATE_FILE => "Create",
+        TOOL_BASH => "Bash",
+        TOOL_SEARCH => "Search",
+        TOOL_CREATE_TODO_LIST => "TodoCreate",
+        TOOL_UPDATE_TODO_LIST => "TodoUpdate",
         _ => "Tool",
     }
 }

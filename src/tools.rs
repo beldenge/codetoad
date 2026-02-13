@@ -1,3 +1,7 @@
+use crate::tool_catalog::{
+    TOOL_BASH, TOOL_CREATE_FILE, TOOL_CREATE_TODO_LIST, TOOL_SEARCH, TOOL_STR_REPLACE_EDITOR,
+    TOOL_UPDATE_TODO_LIST, TOOL_VIEW_FILE,
+};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
@@ -107,13 +111,13 @@ fn todo_items() -> &'static Mutex<Vec<TodoItem>> {
 
 pub async fn execute_tool(name: &str, args: &Value) -> ToolResult {
     let result = match name {
-        "view_file" => execute_view_file(args),
-        "create_file" => execute_create_file(args),
-        "str_replace_editor" => execute_str_replace_editor(args),
-        "bash" => execute_bash_tool(args).await,
-        "search" => execute_search(args).await,
-        "create_todo_list" => execute_create_todo_list(args),
-        "update_todo_list" => execute_update_todo_list(args),
+        TOOL_VIEW_FILE => execute_view_file(args),
+        TOOL_CREATE_FILE => execute_create_file(args),
+        TOOL_STR_REPLACE_EDITOR => execute_str_replace_editor(args),
+        TOOL_BASH => execute_bash_tool(args).await,
+        TOOL_SEARCH => execute_search(args).await,
+        TOOL_CREATE_TODO_LIST => execute_create_todo_list(args),
+        TOOL_UPDATE_TODO_LIST => execute_update_todo_list(args),
         _ => Ok(ToolResult::err(format!("Unknown tool: {name}"))),
     };
 
