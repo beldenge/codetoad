@@ -7,6 +7,7 @@ use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyE
 use crossterm::execute;
 use crossterm::style::Stylize;
 use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Instant;
@@ -200,6 +201,9 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     let started_at = Instant::now();
     let mut status_tick = time::interval(Duration::from_millis(120));
     let mut renderer = MarkdownStreamRenderer::default();
+    let mut tool_started_at: HashMap<String, Instant> = HashMap::new();
+    let mut tool_succeeded = 0usize;
+    let mut tool_failed = 0usize;
 
     loop {
         let event = tokio::select! {
@@ -256,12 +260,19 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 tool_calls_seen += calls.len();
                 clear_status_line(&mut status_width)?;
                 for call in calls {
+                    let label = format!("{}({})", pretty_tool_name(&call.name), tool_target(&call));
+                    println!(
+                        "{} {}",
+                        "◦".magenta(),
+                        format!("start {label}").dark_grey()
+                    );
                     println!(
                         "{} {}",
                         "●".magenta(),
-                        format!("{}({})", pretty_tool_name(&call.name), tool_target(&call)).white()
+                        label.white()
                     );
                     println!("{}", "  -> Executing...".cyan());
+                    tool_started_at.insert(call.id.clone(), Instant::now());
                 }
             }
             AgentEvent::ToolResult { tool_call, result } => {
@@ -279,6 +290,30 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                     "running tools"
                 };
                 clear_status_line(&mut status_width)?;
+                let label = format!(
+                    "{}({})",
+                    pretty_tool_name(&tool_call.name),
+                    tool_target(&tool_call)
+                );
+                let elapsed = tool_started_at
+                    .remove(&tool_call.id)
+                    .map(|start| format_elapsed(start.elapsed()))
+                    .unwrap_or_else(|| "n/a".to_string());
+                if result.success {
+                    tool_succeeded = tool_succeeded.saturating_add(1);
+                    println!(
+                        "{} {}",
+                        "◦".magenta(),
+                        format!("done {label} in {elapsed}").dark_green()
+                    );
+                } else {
+                    tool_failed = tool_failed.saturating_add(1);
+                    println!(
+                        "{} {}",
+                        "◦".magenta(),
+                        format!("failed {label} in {elapsed}").red()
+                    );
+                }
                 print_tool_result(tool_call, result);
             }
             AgentEvent::Done => {
@@ -286,6 +321,16 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 if started_content {
                     flush_markdown_pending(&mut renderer)?;
                     println!();
+                }
+                if tool_calls_seen > 0 {
+                    println!(
+                        "{}",
+                        format!(
+                            "◦ tools summary: {} total, {} succeeded, {} failed",
+                            tool_calls_seen, tool_succeeded, tool_failed
+                        )
+                        .dark_grey()
+                    );
                 }
                 let elapsed = started_at.elapsed();
                 println!(
@@ -304,6 +349,16 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 if started_content {
                     flush_markdown_pending(&mut renderer)?;
                     println!();
+                }
+                if tool_calls_seen > 0 {
+                    println!(
+                        "{}",
+                        format!(
+                            "◦ tools summary: {} total, {} succeeded, {} failed",
+                            tool_calls_seen, tool_succeeded, tool_failed
+                        )
+                        .dark_grey()
+                    );
                 }
                 println!("{}", format!("Error: {err}").red());
                 break;
@@ -489,6 +544,12 @@ fn clear_status_line(prev_width: &mut usize) -> io::Result<()> {
         *prev_width = 0;
     }
     Ok(())
+}
+
+fn format_elapsed(elapsed: std::time::Duration) -> String {
+    let secs = elapsed.as_secs();
+    let tenths = elapsed.subsec_millis() / 100;
+    format!("{secs}.{tenths}s")
 }
 
 fn stream_markdown_chunk(renderer: &mut MarkdownStreamRenderer, chunk: &str) -> io::Result<()> {

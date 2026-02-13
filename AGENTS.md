@@ -41,6 +41,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - scrollback-native inline interaction loop
   - primary parity mode for terminal history behavior
   - markdown-aware streaming renderer with lightweight syntax coloring
+  - tool lifecycle timeline (start/result + durations + response summary)
 
 ## UI Direction
 

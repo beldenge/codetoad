@@ -27,6 +27,7 @@ Implemented now:
 - Inline prompt supports slash-command completion with `Tab`
 - Inline prompt shows live slash-command suggestions while typing `/...`
 - Inline assistant output applies markdown-aware rendering (headings, lists, inline code, fenced code blocks) with lightweight syntax coloring
+- Inline tool execution shows lifecycle timeline entries with per-tool durations and end-of-response tool summary
 - Ctrl+C in prompt clears input first; pressing Ctrl+C again on empty input exits
 - Native terminal scrollback remains visible after exit/Ctrl+C
 - Tool-calling agent loop with max tool rounds
