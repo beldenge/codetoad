@@ -495,13 +495,7 @@ async fn run_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
 }
 
 fn print_logo_and_tips() {
-    let logo = [
-        "  /\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\",
-        " /\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/",
-        " \\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\",
-        "  /\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/\\",
-    ];
-    for line in logo {
+    for line in include_str!("../banner.txt").lines() {
         println!("{line}");
     }
     println!();
