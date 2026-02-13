@@ -8,7 +8,7 @@ use crossterm::style::Stylize;
 use std::io::{self, Write};
 
 pub fn print_logo_and_tips() {
-    for line in include_str!("../banner.txt").lines() {
+    for line in include_str!("../../banner.txt").lines() {
         println!("{line}");
     }
     println!();

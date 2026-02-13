@@ -11,8 +11,8 @@ use grok_build::git_ops::{
     run_commit_and_push,
 };
 use grok_build::image_input::prepare_user_input;
-use grok_build::inline_ui;
 use grok_build::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
+use grok_build::ui::inline;
 use std::io;
 
 #[tokio::main]
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
         Some(cli.message.join(" "))
     };
 
-    inline_ui::run_inline(app, initial_message).await
+    inline::run_inline(app, initial_message).await
 }
 
 fn install_ctrlc_handler() -> Result<()> {

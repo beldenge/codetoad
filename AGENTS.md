@@ -31,11 +31,11 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - includes `--api-key-storage` mode selection (`keychain` or `plaintext`)
 - `src/slash_commands.rs`
   - canonical slash-command metadata, parsing, and suggestion/help helpers
-- `src/inline_prompt.rs`
+- `src/ui/prompt.rs`
   - prompt input editor, key handling, slash suggestion panel, and model picker UI
-- `src/inline_markdown.rs`
+- `src/ui/markdown.rs`
   - markdown-aware streaming renderer and lightweight code syntax highlighting
-- `src/inline_feedback.rs`
+- `src/ui/feedback.rs`
   - shared inline output helpers (banner/tips, tool result rendering, confirmation prompt)
   - tool label/target formatting used by inline orchestration
 - `src/image_input.rs`
@@ -109,7 +109,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/tools/search_tool.rs`
   - `search` tool execution (text/file/both modes via ripgrep)
   - shared result ranking and formatting for search output
-- `src/inline_ui.rs`
+- `src/ui/inline.rs`
   - scrollback-native inline interaction loop orchestration
   - primary parity mode for terminal history behavior
   - pre-submit attachment confirmation output for detected image inputs

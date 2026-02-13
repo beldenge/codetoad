@@ -6,13 +6,13 @@ use crate::git_ops::{
     run_commit_and_push as run_commit_and_push_flow,
 };
 use crate::image_input::prepare_user_input;
-use crate::inline_feedback::{
+use crate::ui::feedback::{
     print_logo_and_tips, print_tool_result, prompt_tool_confirmation, tool_label,
 };
-use crate::inline_markdown::{
+use crate::ui::markdown::{
     MarkdownStreamRenderer, flush_markdown_pending, stream_markdown_chunk,
 };
-use crate::inline_prompt::{read_prompt_line, select_model_inline, select_option_inline};
+use crate::ui::prompt::{read_prompt_line, select_model_inline, select_option_inline};
 use crate::session_store::{list_sessions, load_session};
 use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
