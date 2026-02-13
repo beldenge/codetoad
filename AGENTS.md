@@ -45,6 +45,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - `create_todo_list`, `update_todo_list`
 - `src/inline_ui.rs`
   - scrollback-native inline interaction loop
+  - startup spinner animation with ASCII Grok logo
   - primary parity mode for terminal history behavior
   - vertical slash-command suggestion panel under prompt
   - markdown-aware streaming renderer with lightweight syntax coloring

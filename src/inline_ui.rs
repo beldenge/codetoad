@@ -33,6 +33,34 @@ const COMMAND_SUGGESTIONS: &[(&str, &str)] = &[
 ];
 const STATUS_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const STREAM_FLUSH_THRESHOLD: usize = 16;
+const STARTUP_LOGO_FRAME_MS: u64 = 80;
+const STARTUP_LOGO_SPINS: usize = 2;
+const STARTUP_LOGO_WIDTH: usize = 43;
+const STARTUP_LOGO_HEIGHT: usize = 14;
+const STARTUP_LOGO_TOP: usize = 4;
+const STARTUP_LOGO_LEFT: usize = 6;
+const STARTUP_LOGO_ORBIT_POINTS: [(usize, usize); 12] = [
+    (0, 21),
+    (1, 29),
+    (3, 35),
+    (6, 39),
+    (9, 35),
+    (11, 29),
+    (13, 21),
+    (11, 13),
+    (9, 7),
+    (6, 3),
+    (3, 7),
+    (1, 13),
+];
+const STARTUP_GROK_LOGO: [&str; 6] = [
+    "            ______                  ",
+    "           / ____/_________  ____ _ ",
+    "          / / __/ ___/ __ \\/ __ `/ ",
+    "         / /_/ / /  / /_/ / /_/ /  ",
+    "         \\____/_/   \\____/\\__,_/   ",
+    "              G R O K               ",
+];
 
 #[derive(Default)]
 struct MarkdownStreamRenderer {
@@ -63,7 +91,7 @@ pub async fn run_inline(
     initial_message: Option<String>,
 ) -> Result<()> {
     recover_terminal_state();
-    print_logo_and_tips();
+    print_logo_and_tips(true);
     let mut history: Vec<String> = Vec::new();
     let mut auto_edit = false;
     let mut synced_auto_edit = auto_edit;
@@ -134,7 +162,7 @@ async fn handle_input(
     if input == "/clear" {
         agent.lock().await.reset_conversation();
         clear_screen();
-        print_logo_and_tips();
+        print_logo_and_tips(false);
         return Ok(());
     }
 
@@ -494,16 +522,87 @@ async fn run_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
     Ok(())
 }
 
-fn print_logo_and_tips() {
-    for line in include_str!("../banner.txt").lines() {
-        println!("{line}");
+fn print_logo_and_tips(animated: bool) {
+    if animated {
+        play_startup_logo_animation();
+    } else {
+        print_startup_logo_frame(0);
     }
+    println!();
     println!();
     println!("Tips for getting started:");
     println!("1. Ask questions, edit files, or run commands.");
     println!("2. Use /help for slash commands.");
     println!("3. Scrollback is native in inline mode (no alternate screen).");
     println!();
+}
+
+fn play_startup_logo_animation() {
+    let mut stdout = io::stdout();
+    let frame_count = STARTUP_LOGO_ORBIT_POINTS.len();
+    let total_frames = frame_count * STARTUP_LOGO_SPINS;
+    for frame_idx in 0..total_frames {
+        let frame = build_startup_logo_frame(frame_idx % frame_count);
+        for line in &frame {
+            println!("{line}");
+        }
+        let _ = stdout.flush();
+        std::thread::sleep(Duration::from_millis(STARTUP_LOGO_FRAME_MS));
+        if frame_idx + 1 < total_frames {
+            rewind_startup_logo_frame(&mut stdout, frame.len());
+        }
+    }
+}
+
+fn print_startup_logo_frame(highlight_idx: usize) {
+    for line in build_startup_logo_frame(highlight_idx) {
+        println!("{line}");
+    }
+}
+
+fn build_startup_logo_frame(highlight_idx: usize) -> Vec<String> {
+    let mut canvas = vec![vec![' '; STARTUP_LOGO_WIDTH]; STARTUP_LOGO_HEIGHT];
+    for (idx, (row, col)) in STARTUP_LOGO_ORBIT_POINTS.iter().enumerate() {
+        if *row < STARTUP_LOGO_HEIGHT && *col < STARTUP_LOGO_WIDTH {
+            canvas[*row][*col] = if idx == highlight_idx { '@' } else { 'o' };
+        }
+    }
+
+    for (row_offset, line) in STARTUP_GROK_LOGO.iter().enumerate() {
+        let row = STARTUP_LOGO_TOP + row_offset;
+        if row >= STARTUP_LOGO_HEIGHT {
+            break;
+        }
+        for (col_offset, ch) in line.chars().enumerate() {
+            let col = STARTUP_LOGO_LEFT + col_offset;
+            if col >= STARTUP_LOGO_WIDTH {
+                break;
+            }
+            canvas[row][col] = ch;
+        }
+    }
+
+    canvas
+        .into_iter()
+        .map(|line| line.into_iter().collect::<String>().trim_end().to_string())
+        .collect()
+}
+
+fn rewind_startup_logo_frame(stdout: &mut io::Stdout, line_count: usize) {
+    if line_count == 0 {
+        return;
+    }
+    let up = u16::try_from(line_count).unwrap_or(u16::MAX);
+    let _ = execute!(stdout, MoveUp(up), MoveToColumn(0));
+    for _ in 0..line_count {
+        let _ = execute!(
+            stdout,
+            Clear(ClearType::CurrentLine),
+            MoveDown(1),
+            MoveToColumn(0)
+        );
+    }
+    let _ = execute!(stdout, MoveUp(up), MoveToColumn(0));
 }
 
 fn print_tool_result(call: ToolCallSummary, result: ToolResult) {
