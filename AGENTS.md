@@ -38,6 +38,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/inline_feedback.rs`
   - shared inline output helpers (banner/tips, tool result rendering, confirmation prompt)
   - tool label/target formatting used by inline orchestration
+- `src/image_input.rs`
+  - interactive input parsing for image attachments (drag/drop paths, markdown image links, `file://` URLs)
+  - image file loading/encoding with format + size validation
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
   - API key retrieval precedence: provider-aware env vars (`GROK_API_KEY`/`XAI_API_KEY`/`OPENAI_API_KEY`) -> keychain (default mode) -> plaintext fallback
@@ -67,6 +70,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - model capability helpers for server-side tools (`web_search`, `x_search`)
 - `src/protocol.rs`
   - serde request/response DTOs
+  - includes multimodal user attachment shape (`ChatImageAttachment`)
 - `src/confirmation.rs`
   - shared confirmation operation enum (`File`, `Bash`) used across agent/UI/tool metadata
 - `src/tool_catalog.rs`
@@ -101,6 +105,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/inline_ui.rs`
   - scrollback-native inline interaction loop orchestration
   - primary parity mode for terminal history behavior
+  - pre-submit attachment confirmation output for detected image inputs
   - tool lifecycle timeline (start/result + durations + response summary)
   - active generation cancellation via `Esc`/`Ctrl+C`
   - live status telemetry with approximate token counts and auto-edit mode indicator

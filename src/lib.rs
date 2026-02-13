@@ -7,6 +7,7 @@ pub mod confirmation;
 pub mod custom_instructions;
 pub mod git_ops;
 pub mod grok_client;
+pub mod image_input;
 pub mod inline_feedback;
 pub mod inline_markdown;
 pub mod inline_prompt;

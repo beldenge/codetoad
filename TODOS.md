@@ -4,10 +4,14 @@ Backlog for upcoming parity and platform enhancements.
 
 ## Planned
 
-- [ ] Support image/screenshot input parity (drag/drop and paste)
+- [x] Support image/screenshot input parity (drag/drop and paste)
   - Goal: accept image paths and pasted screenshots in interactive mode, then pass image content to the model using a supported multimodal payload shape.
-  - UX target: similar to Codex/Claude-style CLI behavior, with visible attachment confirmation before submit.
-  - Scope notes: include Windows, macOS, and Linux terminal behaviors.
+  - Implemented:
+    - image path detection from drag/drop style input and markdown image links
+    - `file://` URL decoding support
+    - attachment pre-submit confirmation lines in inline UI
+    - multimodal mapping for both xAI Responses (`input_image`) and Chat Completions (`image_url`)
+  - Scope notes: supports common image formats (`png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`) with size guardrails.
 
 - [x] Add session persistence for saving and resuming tool loops across runs
   - Goal: allow users to pause and resume coding sessions, preserving context and partial tool executions.

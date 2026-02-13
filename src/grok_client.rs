@@ -123,6 +123,7 @@ impl GrokClient {
         let messages = vec![ChatMessage {
             role: "user".to_string(),
             content: Some(prompt.to_string()),
+            attachments: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -183,7 +184,7 @@ impl GrokClient {
     ) -> Result<ChatCompletionResponse> {
         let payload = ChatCompletionsPayload::new(
             self.current_model.clone(),
-            messages.to_vec(),
+            to_chat_completions_messages(messages),
             tools.to_vec(),
             false,
             self.max_tokens,
@@ -239,7 +240,7 @@ impl GrokClient {
     {
         let payload = ChatCompletionsPayload::new(
             self.current_model.clone(),
-            messages.to_vec(),
+            to_chat_completions_messages(messages),
             tools.to_vec(),
             true,
             self.max_tokens,
@@ -396,7 +397,7 @@ impl GrokClient {
 #[derive(Debug, Clone, Serialize)]
 struct ChatCompletionsPayload {
     model: String,
-    messages: Vec<ChatMessage>,
+    messages: Vec<Value>,
     tools: Vec<ChatTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<String>,
@@ -410,7 +411,7 @@ struct ChatCompletionsPayload {
 impl ChatCompletionsPayload {
     fn new(
         model: String,
-        messages: Vec<ChatMessage>,
+        messages: Vec<Value>,
         tools: Vec<ChatTool>,
         stream: bool,
         max_tokens: u32,
@@ -435,6 +436,69 @@ impl ChatCompletionsPayload {
                 .then(|| json!({ "mode": search_mode.as_str() })),
         }
     }
+}
+
+fn to_chat_completions_messages(messages: &[ChatMessage]) -> Vec<Value> {
+    messages
+        .iter()
+        .map(chat_message_for_chat_completions)
+        .collect()
+}
+
+fn chat_message_for_chat_completions(message: &ChatMessage) -> Value {
+    let mut object = serde_json::Map::<String, Value>::new();
+    object.insert("role".to_string(), Value::String(message.role.clone()));
+
+    if let Some(tool_calls) = &message.tool_calls
+        && let Ok(value) = serde_json::to_value(tool_calls)
+    {
+        object.insert("tool_calls".to_string(), value);
+    }
+
+    if let Some(tool_call_id) = &message.tool_call_id {
+        object.insert(
+            "tool_call_id".to_string(),
+            Value::String(tool_call_id.clone()),
+        );
+    }
+
+    let content_value = if message.role == "user" {
+        let mut parts = Vec::<Value>::new();
+        if let Some(text) = &message.content
+            && !text.trim().is_empty()
+        {
+            parts.push(json!({
+                "type": "text",
+                "text": text,
+            }));
+        }
+
+        if let Some(attachments) = &message.attachments {
+            for attachment in attachments {
+                parts.push(json!({
+                    "type": "image_url",
+                    "image_url": { "url": attachment.data_url },
+                }));
+            }
+        }
+
+        if parts.is_empty() {
+            Value::String(String::new())
+        } else if parts.len() == 1 && parts[0].get("type").and_then(Value::as_str) == Some("text") {
+            parts[0]
+                .get("text")
+                .and_then(Value::as_str)
+                .map(|text| Value::String(text.to_string()))
+                .unwrap_or_else(|| Value::Array(parts))
+        } else {
+            Value::Array(parts)
+        }
+    } else {
+        Value::String(message.content.clone().unwrap_or_default())
+    };
+    object.insert("content".to_string(), content_value);
+
+    Value::Object(object)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -532,7 +596,7 @@ impl ModelClient for GrokClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatCompletionsPayload, SearchMode};
+    use super::{ChatCompletionsPayload, SearchMode, to_chat_completions_messages};
     use crate::protocol::ChatMessage;
     use crate::provider::{ProviderKind, detect_provider};
     use serde_json::Value;
@@ -541,12 +605,13 @@ mod tests {
     fn non_xai_payload_omits_search_parameters() {
         let payload = ChatCompletionsPayload::new(
             "gpt-4.1".to_string(),
-            vec![ChatMessage {
+            to_chat_completions_messages(&[ChatMessage {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
+                attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
-            }],
+            }]),
             Vec::new(),
             false,
             256,
@@ -562,12 +627,13 @@ mod tests {
     fn xai_payload_includes_search_parameters() {
         let payload = ChatCompletionsPayload::new(
             "grok-4-latest".to_string(),
-            vec![ChatMessage {
+            to_chat_completions_messages(&[ChatMessage {
                 role: "user".to_string(),
                 content: Some("hello".to_string()),
+                attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
-            }],
+            }]),
             Vec::new(),
             false,
             256,
@@ -586,5 +652,45 @@ mod tests {
     #[test]
     fn xai_provider_uses_responses_api_detection() {
         assert_eq!(detect_provider("https://api.x.ai/v1"), ProviderKind::Xai);
+    }
+
+    #[test]
+    fn chat_completions_maps_user_image_attachments() {
+        let payload = ChatCompletionsPayload::new(
+            "gpt-4.1".to_string(),
+            to_chat_completions_messages(&[ChatMessage {
+                role: "user".to_string(),
+                content: Some("Describe this image".to_string()),
+                attachments: Some(vec![crate::protocol::ChatImageAttachment {
+                    filename: "snap.png".to_string(),
+                    mime_type: "image/png".to_string(),
+                    data_url: "data:image/png;base64,abc".to_string(),
+                }]),
+                tool_calls: None,
+                tool_call_id: None,
+            }]),
+            Vec::new(),
+            false,
+            256,
+            SearchMode::Off,
+            false,
+        );
+
+        let serialized = serde_json::to_value(&payload).expect("serializes");
+        let messages = serialized
+            .get("messages")
+            .and_then(Value::as_array)
+            .expect("messages are present");
+        let content = messages[0]
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("multimodal content is array");
+        assert_eq!(
+            content[1]
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            "image_url"
+        );
     }
 }

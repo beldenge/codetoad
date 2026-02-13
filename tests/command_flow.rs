@@ -8,7 +8,9 @@ use grok_build::protocol::{
     ChatCompletionStreamChunk, ChatCompletionStreamDelta, ChatCompletionToolCallDelta,
     ChatCompletionToolCallFunctionDelta, ChatMessage, ChatTool,
 };
-use grok_build::slash_commands::{CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command};
+use grok_build::slash_commands::{
+    CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
+};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -129,6 +131,7 @@ async fn streaming_flow_emits_confirmation_then_rejection_result_then_done() {
         agent
             .process_user_message_stream(
                 "run a command".to_string(),
+                Vec::new(),
                 CancellationToken::new(),
                 updates_tx,
                 Some(confirm_rx),
@@ -202,8 +205,14 @@ async fn streaming_flow_emits_confirmation_then_rejection_result_then_done() {
 
 #[test]
 fn slash_command_parser_and_help_are_consistent() {
-    assert!(matches!(parse_slash_command("/help"), Some(ParsedSlashCommand::Help)));
-    assert!(matches!(parse_slash_command("/clear"), Some(ParsedSlashCommand::Clear)));
+    assert!(matches!(
+        parse_slash_command("/help"),
+        Some(ParsedSlashCommand::Help)
+    ));
+    assert!(matches!(
+        parse_slash_command("/clear"),
+        Some(ParsedSlashCommand::Clear)
+    ));
     assert!(matches!(
         parse_slash_command("/models"),
         Some(ParsedSlashCommand::Models)
@@ -220,7 +229,10 @@ fn slash_command_parser_and_help_are_consistent() {
         parse_slash_command("/commit-and-push"),
         Some(ParsedSlashCommand::CommitAndPush)
     ));
-    assert!(matches!(parse_slash_command("/exit"), Some(ParsedSlashCommand::Exit)));
+    assert!(matches!(
+        parse_slash_command("/exit"),
+        Some(ParsedSlashCommand::Exit)
+    ));
 
     let mut built_in = String::new();
     append_help_section(&mut built_in, "Built-in Commands", CommandGroup::BuiltIn);

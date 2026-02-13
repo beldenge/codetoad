@@ -5,6 +5,7 @@ use crate::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushStep,
     run_commit_and_push as run_commit_and_push_flow,
 };
+use crate::image_input::prepare_user_input;
 use crate::inline_feedback::{
     print_logo_and_tips, print_tool_result, prompt_tool_confirmation, tool_label,
 };
@@ -18,7 +19,9 @@ use crate::slash_commands::{
 };
 use crate::tools::ToolResult;
 use anyhow::Result;
-use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers,
+};
 use crossterm::execute;
 use crossterm::style::Stylize;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
@@ -49,10 +52,7 @@ impl Drop for StreamRawModeGuard {
     }
 }
 
-pub async fn run_inline(
-    app: AppContext,
-    initial_message: Option<String>,
-) -> Result<()> {
+pub async fn run_inline(app: AppContext, initial_message: Option<String>) -> Result<()> {
     recover_terminal_state();
     print_logo_and_tips();
     println!("{}", format!("cwd: {}", app.cwd().display()).dark_grey());
@@ -69,12 +69,7 @@ pub async fn run_inline(
             app.set_auto_edit_enabled(auto_edit).await;
             synced_auto_edit = auto_edit;
         }
-        handle_input(
-            &initial,
-            auto_edit,
-            app.clone(),
-        )
-        .await?;
+        handle_input(&initial, auto_edit, app.clone()).await?;
         let _ = app.autosave_session().await?;
         current_model = app.agent().lock().await.current_model().to_string();
     }
@@ -95,12 +90,7 @@ pub async fn run_inline(
             app.set_auto_edit_enabled(auto_edit).await;
             synced_auto_edit = auto_edit;
         }
-        handle_input(
-            &input,
-            auto_edit,
-            app.clone(),
-        )
-        .await?;
+        handle_input(&input, auto_edit, app.clone()).await?;
         let _ = app.autosave_session().await?;
         current_model = app.agent().lock().await.current_model().to_string();
     }
@@ -114,11 +104,7 @@ fn recover_terminal_state() {
     let _ = execute!(stdout, DisableMouseCapture);
 }
 
-async fn handle_input(
-    input: &str,
-    auto_edit_enabled: bool,
-    app: AppContext,
-) -> Result<()> {
+async fn handle_input(input: &str, auto_edit_enabled: bool, app: AppContext) -> Result<()> {
     if let Some(command) = parse_slash_command(input) {
         return handle_slash_command(command, app).await;
     }
@@ -127,13 +113,38 @@ async fn handle_input(
         return handle_direct_command(input, auto_edit_enabled, app).await;
     }
 
-    stream_agent_message(input.to_string(), app).await
+    let prepared = prepare_user_input(input, app.cwd());
+    for warning in prepared.warnings {
+        println!("{}", format!("warning: {warning}").yellow());
+    }
+    if !prepared.attachments.is_empty() {
+        for attachment in &prepared.attachments {
+            println!(
+                "{} {}",
+                "◦".magenta(),
+                format!(
+                    "attached image: {} ({})",
+                    attachment.display_path,
+                    format_bytes(attachment.size_bytes)
+                )
+                .dark_grey()
+            );
+        }
+    }
+
+    stream_agent_message(
+        prepared.text,
+        prepared
+            .attachments
+            .into_iter()
+            .map(|attachment| attachment.chat_attachment)
+            .collect(),
+        app,
+    )
+    .await
 }
 
-async fn handle_slash_command(
-    command: ParsedSlashCommand,
-    app: AppContext,
-) -> Result<()> {
+async fn handle_slash_command(command: ParsedSlashCommand, app: AppContext) -> Result<()> {
     match command {
         ParsedSlashCommand::Help => {
             println!("{}", help_text());
@@ -182,7 +193,10 @@ async fn handle_slash_command(
             };
             let name = selected;
             let snapshot = load_session(app.cwd(), &name)?;
-            app.agent().lock().await.restore_session_snapshot(snapshot)?;
+            app.agent()
+                .lock()
+                .await
+                .restore_session_snapshot(snapshot)?;
             app.sync_auto_edit_from_agent().await;
             app.set_active_session_name(name.clone()).await;
             println!("Loaded session: {name}");
@@ -247,7 +261,11 @@ async fn handle_direct_command(
     Ok(())
 }
 
-async fn stream_agent_message(message: String, app: AppContext) -> Result<()> {
+async fn stream_agent_message(
+    message: String,
+    attachments: Vec<crate::protocol::ChatImageAttachment>,
+    app: AppContext,
+) -> Result<()> {
     let _raw_guard = StreamRawModeGuard::new()?;
     let cancel_token = CancellationToken::new();
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
@@ -264,15 +282,14 @@ async fn stream_agent_message(message: String, app: AppContext) -> Result<()> {
             .await
             .process_user_message_stream(
                 message,
+                attachments,
                 task_cancel_token,
                 agent_tx,
                 Some(task_confirm_rx),
             )
             .await;
         if let Err(err) = result {
-            error_tx
-                .send(AgentEvent::Error(format!("{err:#}")))
-                .ok();
+            error_tx.send(AgentEvent::Error(format!("{err:#}"))).ok();
             error_tx.send(AgentEvent::Done).ok();
         }
     });
@@ -359,16 +376,8 @@ async fn stream_agent_message(message: String, app: AppContext) -> Result<()> {
                 tool_calls_seen += calls.len();
                 for call in calls {
                     let label = tool_label(&call);
-                    println!(
-                        "{} {}",
-                        "◦".magenta(),
-                        format!("start {label}").dark_grey()
-                    );
-                    println!(
-                        "{} {}",
-                        "●".magenta(),
-                        label.white()
-                    );
+                    println!("{} {}", "◦".magenta(), format!("start {label}").dark_grey());
+                    println!("{} {}", "●".magenta(), label.white());
                     println!("{}", "  -> Executing...".cyan());
                     tool_started_at.insert(call.id.clone(), Instant::now());
                 }
@@ -537,6 +546,7 @@ fn help_text() -> String {
     output.push_str(
         "\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\n\
 Input Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Shift+Tab     Toggle auto-edit mode (bypass confirmations)\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\n\
+Image Input:\n  Drag/drop image paths or include markdown image links (`![alt](path/to/image.png)`)\n  Detected images are attached automatically and listed before submit\n\n\
 Confirmation Controls:\n  y             Approve operation once\n  a             Approve this operation type for session\n  n / Esc       Reject operation\n\n\
 Active Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\n\
 Inline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C.",
@@ -583,6 +593,16 @@ fn format_token_count(tokens: usize) -> String {
     }
 }
 
+fn format_bytes(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 fn poll_cancel_request() -> Result<bool> {
     if !event::poll(std::time::Duration::from_millis(0))? {
         return Ok(false);
@@ -598,4 +618,3 @@ fn poll_cancel_request() -> Result<bool> {
     Ok(key.code == KeyCode::Esc
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)))
 }
-

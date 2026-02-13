@@ -114,13 +114,12 @@ pub fn convert_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<Valu
                 }));
             }
             "assistant" => {
-                if let Some(content) = message.content.clone()
-                    && !content.trim().is_empty()
-                {
+                let assistant_content = responses_content_for_message(message, false);
+                if !assistant_content.is_empty() {
                     input.push(json!({
                         "type": "message",
                         "role": "assistant",
-                        "content": [{ "type": "input_text", "text": content }],
+                        "content": assistant_content,
                     }));
                 }
                 if let Some(tool_calls) = message.tool_calls.clone() {
@@ -135,17 +134,49 @@ pub fn convert_messages_to_responses_input(messages: &[ChatMessage]) -> Vec<Valu
                 }
             }
             role => {
-                let content = message.content.clone().unwrap_or_default();
+                let content = responses_content_for_message(message, true);
                 input.push(json!({
                     "type": "message",
                     "role": role,
-                    "content": [{ "type": "input_text", "text": content }],
+                    "content": content,
                 }));
             }
         }
     }
 
     input
+}
+
+fn responses_content_for_message(message: &ChatMessage, include_images: bool) -> Vec<Value> {
+    let mut content = Vec::<Value>::new();
+    if let Some(text) = message.content.clone()
+        && !text.trim().is_empty()
+    {
+        content.push(json!({
+            "type": "input_text",
+            "text": text,
+        }));
+    }
+
+    if include_images
+        && message.role == "user"
+        && let Some(attachments) = &message.attachments
+    {
+        for attachment in attachments {
+            content.push(json!({
+                "type": "input_image",
+                "image_url": attachment.data_url,
+            }));
+        }
+    }
+
+    if content.is_empty() {
+        content.push(json!({
+            "type": "input_text",
+            "text": "",
+        }));
+    }
+    content
 }
 
 pub fn flatten_tools(tools: &[ChatTool]) -> Vec<Value> {
@@ -241,7 +272,10 @@ pub fn supports_server_side_tools(model: &str) -> bool {
 }
 
 pub fn server_side_search_tools() -> Vec<Value> {
-    vec![json!({ "type": "web_search" }), json!({ "type": "x_search" })]
+    vec![
+        json!({ "type": "web_search" }),
+        json!({ "type": "x_search" }),
+    ]
 }
 
 fn parse_message_item_text(data: &str) -> Result<Option<String>> {
@@ -366,7 +400,7 @@ fn function_call_id(item: &Value, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn supports_server_side_tools_only_for_grok4_family() {
@@ -420,10 +454,7 @@ mod tests {
 
         assert!(!done);
         assert_eq!(chunks.len(), 1);
-        assert_eq!(
-            chunks[0].choices[0].delta.content.as_deref(),
-            Some("abc")
-        );
+        assert_eq!(chunks[0].choices[0].delta.content.as_deref(), Some("abc"));
     }
 
     #[test]
@@ -451,6 +482,32 @@ mod tests {
                 .as_ref()
                 .and_then(|f| f.name.as_deref()),
             Some("view_file")
+        );
+    }
+
+    #[test]
+    fn convert_messages_includes_user_image_attachments() {
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: Some("What is shown here?".to_string()),
+            attachments: Some(vec![crate::protocol::ChatImageAttachment {
+                filename: "shot.png".to_string(),
+                mime_type: "image/png".to_string(),
+                data_url: "data:image/png;base64,abc123".to_string(),
+            }]),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+
+        let input = convert_messages_to_responses_input(&messages);
+        let content = input[0]
+            .get("content")
+            .and_then(Value::as_array)
+            .expect("content is array");
+        assert_eq!(content.len(), 2);
+        assert_eq!(
+            content[1].get("type").and_then(Value::as_str),
+            Some("input_image")
         );
     }
 }

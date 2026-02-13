@@ -10,6 +10,7 @@ use grok_build::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
     run_commit_and_push,
 };
+use grok_build::image_input::prepare_user_input;
 use grok_build::inline_ui;
 use grok_build::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
 use std::io;
@@ -90,9 +91,22 @@ async fn main() -> Result<()> {
     }
 
     if let Some(prompt) = cli.prompt {
+        let prepared = prepare_user_input(&prompt, &cwd);
+        for warning in &prepared.warnings {
+            eprintln!("warning: {warning}");
+        }
         let agent = app.agent();
         let mut guard = agent.lock().await;
-        let output = guard.process_user_message(&prompt).await?;
+        let output = guard
+            .process_user_message_with_attachments(
+                &prepared.text,
+                prepared
+                    .attachments
+                    .into_iter()
+                    .map(|attachment| attachment.chat_attachment)
+                    .collect(),
+            )
+            .await?;
         println!("{output}");
         return Ok(());
     }
@@ -119,37 +133,44 @@ fn install_ctrlc_handler() -> Result<()> {
 
 async fn headless_commit_and_push(app: AppContext) -> Result<()> {
     println!("Processing commit-and-push...");
-    let outcome = run_commit_and_push(
-        app.agent(),
-        CommitAndPushOptions::default(),
-        |event| match event {
-            CommitAndPushEvent::NoChanges => {}
-            CommitAndPushEvent::ChangesDetected => {
-                println!("git status: changes detected");
-            }
-            CommitAndPushEvent::GeneratedMessage(message) => {
-                println!("generated commit message: \"{message}\"");
-            }
-            CommitAndPushEvent::ToolResult { step, result, .. } => {
-                if !result.success {
-                    return;
+    let outcome =
+        run_commit_and_push(
+            app.agent(),
+            CommitAndPushOptions::default(),
+            |event| match event {
+                CommitAndPushEvent::NoChanges => {}
+                CommitAndPushEvent::ChangesDetected => {
+                    println!("git status: changes detected");
                 }
+                CommitAndPushEvent::GeneratedMessage(message) => {
+                    println!("generated commit message: \"{message}\"");
+                }
+                CommitAndPushEvent::ToolResult { step, result, .. } => {
+                    if !result.success {
+                        return;
+                    }
 
-                match step {
-                    CommitAndPushStep::Add => {
-                        println!("git add: staged");
-                    }
-                    CommitAndPushStep::Commit => {
-                        println!("git commit: {}", first_line(result.output.unwrap_or_default()));
-                    }
-                    CommitAndPushStep::Push => {
-                        println!("git push: {}", first_line(result.output.unwrap_or_default()));
+                    match step {
+                        CommitAndPushStep::Add => {
+                            println!("git add: staged");
+                        }
+                        CommitAndPushStep::Commit => {
+                            println!(
+                                "git commit: {}",
+                                first_line(result.output.unwrap_or_default())
+                            );
+                        }
+                        CommitAndPushStep::Push => {
+                            println!(
+                                "git push: {}",
+                                first_line(result.output.unwrap_or_default())
+                            );
+                        }
                     }
                 }
-            }
-        },
-    )
-    .await?;
+            },
+        )
+        .await?;
 
     if matches!(outcome, CommitAndPushOutcome::NoChanges) {
         bail!("No changes to commit. Working directory is clean.");

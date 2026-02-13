@@ -6,7 +6,8 @@ use crate::confirmation::ConfirmationOperation;
 use crate::grok_client::GrokClient;
 use crate::model_client::ModelClient;
 use crate::protocol::{
-    ChatCompletionStreamChunk, ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction,
+    ChatCompletionStreamChunk, ChatImageAttachment, ChatMessage, ChatTool, ChatToolCall,
+    ChatToolCallFunction,
 };
 use crate::tool_catalog::{confirmation_operation_for_tool, default_tools};
 use crate::tools::{
@@ -17,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
@@ -99,6 +100,7 @@ impl<C: ModelClient> Agent<C> {
         let messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some(system_prompt.clone()),
+            attachments: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -160,6 +162,7 @@ impl<C: ModelClient> Agent<C> {
         self.messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some(self.system_prompt.clone()),
+            attachments: None,
             tool_calls: None,
             tool_call_id: None,
         }];
@@ -180,12 +183,16 @@ impl<C: ModelClient> Agent<C> {
         })
     }
 
-    pub(crate) fn restore_session_snapshot(&mut self, snapshot: AgentSessionSnapshot) -> Result<()> {
+    pub(crate) fn restore_session_snapshot(
+        &mut self,
+        snapshot: AgentSessionSnapshot,
+    ) -> Result<()> {
         self.client.set_model(snapshot.model);
         self.messages = if snapshot.messages.is_empty() {
             vec![ChatMessage {
                 role: "system".to_string(),
                 content: Some(self.system_prompt.clone()),
+                attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
             }]
@@ -204,9 +211,23 @@ impl<C: ModelClient> Agent<C> {
     }
 
     pub async fn process_user_message(&mut self, user_message: &str) -> Result<String> {
+        self.process_user_message_with_attachments(user_message, Vec::new())
+            .await
+    }
+
+    pub async fn process_user_message_with_attachments(
+        &mut self,
+        user_message: &str,
+        attachments: Vec<ChatImageAttachment>,
+    ) -> Result<String> {
         self.messages.push(ChatMessage {
             role: "user".to_string(),
             content: Some(user_message.to_string()),
+            attachments: if attachments.is_empty() {
+                None
+            } else {
+                Some(attachments)
+            },
             tool_calls: None,
             tool_call_id: None,
         });
@@ -229,6 +250,7 @@ impl<C: ModelClient> Agent<C> {
             self.messages.push(ChatMessage {
                 role: "assistant".to_string(),
                 content: Some(assistant_content.clone()),
+                attachments: None,
                 tool_calls: assistant_tool_calls.clone(),
                 tool_call_id: None,
             });
@@ -242,6 +264,7 @@ impl<C: ModelClient> Agent<C> {
                     self.messages.push(ChatMessage {
                         role: "tool".to_string(),
                         content: Some(result.content_for_model()),
+                        attachments: None,
                         tool_calls: None,
                         tool_call_id: Some(call.id),
                     });
@@ -258,6 +281,7 @@ impl<C: ModelClient> Agent<C> {
     pub async fn process_user_message_stream(
         &mut self,
         user_message: String,
+        attachments: Vec<ChatImageAttachment>,
         cancel_token: CancellationToken,
         updates: mpsc::UnboundedSender<AgentEvent>,
         confirmation_rx: Option<Arc<Mutex<mpsc::UnboundedReceiver<ConfirmationDecision>>>>,
@@ -265,6 +289,11 @@ impl<C: ModelClient> Agent<C> {
         self.messages.push(ChatMessage {
             role: "user".to_string(),
             content: Some(user_message.clone()),
+            attachments: if attachments.is_empty() {
+                None
+            } else {
+                Some(attachments)
+            },
             tool_calls: None,
             tool_call_id: None,
         });
@@ -341,6 +370,7 @@ impl<C: ModelClient> Agent<C> {
             self.messages.push(ChatMessage {
                 role: "assistant".to_string(),
                 content: Some(content),
+                attachments: None,
                 tool_calls: if tool_calls.is_empty() {
                     None
                 } else {
@@ -390,6 +420,7 @@ impl<C: ModelClient> Agent<C> {
                         self.messages.push(ChatMessage {
                             role: "tool".to_string(),
                             content: Some(result.content_for_model()),
+                            attachments: None,
                             tool_calls: None,
                             tool_call_id: Some(tool_call.id.clone()),
                         });
@@ -409,6 +440,7 @@ impl<C: ModelClient> Agent<C> {
                 self.messages.push(ChatMessage {
                     role: "tool".to_string(),
                     content: Some(result.content_for_model()),
+                    attachments: None,
                     tool_calls: None,
                     tool_call_id: Some(tool_call.id.clone()),
                 });

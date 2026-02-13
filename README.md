@@ -10,6 +10,7 @@ It provides:
   - non-xAI OpenAI-compatible base URLs use Chat Completions payloads
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`, `search`, `create_todo_list`, `update_todo_list`)
 - Streaming terminal-native UI built with `crossterm`
+- Multimodal image input support (drag/drop paths, markdown image links, and `file://` paths)
 - Slash commands compatible with the TypeScript app:
   - `/help`
   - `/clear`
@@ -34,6 +35,7 @@ Implemented now:
 - Inline prompt supports slash-command suggestions with descriptions while typing `/...`
 - Slash suggestions render as a vertical list under the prompt (no horizontal scrolling)
 - `Up/Down` navigates command suggestions, `Tab` autocompletes, and `Enter` runs exact slash commands
+- Inline input auto-detects image attachments from dropped paths/markdown image links and prints attachment confirmation before submit
 - Sessions are auto-saved to `.grok/sessions/*.json` during interactive usage
 - `/resume` opens an inline picker (same navigation style as model picker) to reload a saved session
 - Resume restores model/history/cwd/todo state and auto-edit/confirmation session flags
@@ -55,6 +57,7 @@ Implemented now:
 - Tool path/cwd state and todo state are session-scoped in the agent runtime (global statics removed)
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items
+  - Maps user image attachments to Responses `input_image` parts
   - Flattens tool schema format for Responses API
   - Adds xAI Agent Tools search (`web_search`, `x_search`) when search mode is auto on Grok-4 models
   - If current model is not Grok-4, search-enabled requests are routed to `grok-4-latest` (or `GROK_SEARCH_MODEL`) while non-search requests keep the selected model

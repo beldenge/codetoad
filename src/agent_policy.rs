@@ -67,6 +67,14 @@ pub(crate) fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {
         if let Some(content) = &message.content {
             chars += content.chars().count();
         }
+        if let Some(attachments) = &message.attachments {
+            for attachment in attachments {
+                chars += attachment.filename.chars().count();
+                chars += attachment.mime_type.chars().count();
+                // Approximate per-image token impact without counting full base64 payload.
+                chars += 512;
+            }
+        }
         if let Some(tool_id) = &message.tool_call_id {
             chars += tool_id.chars().count();
         }
