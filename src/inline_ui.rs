@@ -1,11 +1,11 @@
-use crate::agent::{
-    Agent, AgentEvent, ConfirmationDecision, ConfirmationOperation, ToolCallSummary,
-};
+use crate::agent::{Agent, AgentEvent, ConfirmationDecision, ToolCallSummary};
+use crate::confirmation::ConfirmationOperation;
 use crate::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushStep,
     run_commit_and_push as run_commit_and_push_flow,
 };
 use crate::settings::SettingsManager;
+use crate::tool_catalog::tool_display_name;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
 use crossterm::cursor::{MoveDown, MoveToColumn, MoveUp};
@@ -673,16 +673,7 @@ fn confirmation_detail(tool_call: &ToolCallSummary) -> String {
 }
 
 fn pretty_tool_name(name: &str) -> &str {
-    match name {
-        "view_file" => "Read",
-        "str_replace_editor" => "Update",
-        "create_file" => "Create",
-        "bash" => "Bash",
-        "search" => "Search",
-        "create_todo_list" => "TodoCreate",
-        "update_todo_list" => "TodoUpdate",
-        _ => "Tool",
-    }
+    tool_display_name(name)
 }
 
 fn tool_target(tool: &ToolCallSummary) -> String {

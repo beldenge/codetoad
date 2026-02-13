@@ -36,6 +36,10 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - SSE stream parsing for both formats
 - `src/protocol.rs`
   - serde request/response DTOs
+- `src/confirmation.rs`
+  - shared confirmation operation enum (`File`, `Bash`) used across agent/UI/tool metadata
+- `src/tool_catalog.rs`
+  - canonical tool metadata (schemas, confirmation mapping, UI display labels)
 - `src/git_ops.rs`
   - shared `commit-and-push` workflow used by headless and inline entrypoints
 - `src/agent.rs`

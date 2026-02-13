@@ -1,11 +1,13 @@
 mod agent;
 mod cli;
+mod confirmation;
 mod custom_instructions;
 mod git_ops;
 mod grok_client;
 mod inline_ui;
 mod protocol;
 mod settings;
+mod tool_catalog;
 mod tools;
 
 use crate::agent::Agent;
