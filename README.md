@@ -2,6 +2,8 @@
 
 `grok-build` is a Rust port of the core `grok-cli` coding-agent workflow.
 
+Planned enhancements are tracked in `TODOS.md`.
+
 It provides:
 - xAI Responses API integration (non-deprecated path) with compatibility fallback for chat-completions-style providers
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`, `search`, `create_todo_list`, `update_todo_list`)
