@@ -682,7 +682,12 @@ impl SettingsManager {
             return Ok(());
         };
 
-        if store_api_key_in_keychain(&provider_id, &api_key).is_ok() {
+        if store_api_key_in_keychain(&provider_id, &api_key).is_ok()
+            && load_api_key_from_keychain(&provider_id)
+                .ok()
+                .flatten()
+                .is_some_and(|value| !value.trim().is_empty())
+        {
             if let Some(profile) = self.active_provider_profile_mut() {
                 profile.api_key = None;
             }
