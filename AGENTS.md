@@ -59,8 +59,11 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - ReAct-style loop and tool execution orchestration
   - session-scoped confirmation routing for file/bash operations
 - `src/tools.rs`
-  - `view_file`, `create_file`, `str_replace_editor`, `bash`, `search`
+  - `view_file`, `create_file`, `str_replace_editor`, `bash`
   - `create_todo_list`, `update_todo_list`
+- `src/tools/search_tool.rs`
+  - `search` tool execution (text/file/both modes via ripgrep)
+  - shared result ranking and formatting for search output
 - `src/inline_ui.rs`
   - scrollback-native inline interaction loop orchestration
   - primary parity mode for terminal history behavior
