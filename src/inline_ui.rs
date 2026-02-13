@@ -1088,12 +1088,13 @@ fn read_prompt_line(
     let mut history_idx: Option<usize> = None;
     let mut ctrl_c_armed = false;
     let mut selected_suggestion_idx = 0usize;
-    let mut suggestions_visible = false;
+    let mut rendered_panel_lines = 0usize;
+    let panel = build_prompt_panel(&input, selected_suggestion_idx, *auto_edit, current_model);
     render_prompt_with_suggestions(
         &input,
         cursor,
-        build_prompt_hint(&input, selected_suggestion_idx, *auto_edit, current_model).as_deref(),
-        &mut suggestions_visible,
+        &panel,
+        &mut rendered_panel_lines,
     )?;
 
     loop {
@@ -1110,22 +1111,26 @@ fn read_prompt_line(
                 let suggestions = filtered_command_suggestions(&input);
                 if !suggestions.is_empty() {
                     let safe = selected_suggestion_idx.min(suggestions.len().saturating_sub(1));
-                    input = format!("{} ", suggestions[safe].0);
-                    cursor = input.len();
-                    ctrl_c_armed = false;
-                    history_idx = None;
-                    selected_suggestion_idx = 0;
-                    let hint =
-                        build_prompt_hint(&input, selected_suggestion_idx, *auto_edit, current_model);
-                    render_prompt_with_suggestions(
-                        &input,
-                        cursor,
-                        hint.as_deref(),
-                        &mut suggestions_visible,
-                    )?;
-                    continue;
+                    let selected = suggestions[safe].0;
+                    let trimmed = input.trim();
+                    if trimmed != selected {
+                        input = format!("{selected} ");
+                        cursor = input.len();
+                        ctrl_c_armed = false;
+                        history_idx = None;
+                        selected_suggestion_idx = 0;
+                        let panel =
+                            build_prompt_panel(&input, selected_suggestion_idx, *auto_edit, current_model);
+                        render_prompt_with_suggestions(
+                            &input,
+                            cursor,
+                            &panel,
+                            &mut rendered_panel_lines,
+                        )?;
+                        continue;
+                    }
                 }
-                clear_suggestion_line(&mut suggestions_visible)?;
+                clear_prompt_panel(&mut rendered_panel_lines)?;
                 disable_raw_mode()?;
                 print!("\r\n");
                 io::stdout().flush()?;
@@ -1138,7 +1143,7 @@ fn read_prompt_line(
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if input.is_empty() {
                     if ctrl_c_armed {
-                        clear_suggestion_line(&mut suggestions_visible)?;
+                        clear_prompt_panel(&mut rendered_panel_lines)?;
                         disable_raw_mode()?;
                         print!("\r\n");
                         io::stdout().flush()?;
@@ -1156,7 +1161,7 @@ fn read_prompt_line(
             }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if input.is_empty() {
-                    clear_suggestion_line(&mut suggestions_visible)?;
+                    clear_prompt_panel(&mut rendered_panel_lines)?;
                     disable_raw_mode()?;
                     print!("\r\n");
                     io::stdout().flush()?;
@@ -1296,12 +1301,12 @@ fn read_prompt_line(
             }
         }
 
-        let hint = build_prompt_hint(&input, selected_suggestion_idx, *auto_edit, current_model);
+        let panel = build_prompt_panel(&input, selected_suggestion_idx, *auto_edit, current_model);
         render_prompt_with_suggestions(
             &input,
             cursor,
-            hint.as_deref(),
-            &mut suggestions_visible,
+            &panel,
+            &mut rendered_panel_lines,
         )?;
     }
 }
@@ -1309,22 +1314,26 @@ fn read_prompt_line(
 fn render_prompt_with_suggestions(
     input: &str,
     cursor: usize,
-    suggestion: Option<&str>,
-    suggestions_visible: &mut bool,
+    panel_lines: &[String],
+    rendered_panel_lines: &mut usize,
 ) -> io::Result<()> {
     execute!(io::stdout(), MoveToColumn(0), Clear(ClearType::CurrentLine))?;
     print!("{} {}", ">".cyan(), input);
     execute!(io::stdout(), Clear(ClearType::UntilNewLine))?;
 
-    if let Some(text) = suggestion {
-        let hint = fit_terminal_line(text);
-        execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        print!("{}", hint.dark_grey());
-        execute!(io::stdout(), MoveUp(1))?;
-        *suggestions_visible = true;
-    } else if *suggestions_visible {
-        execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine), MoveUp(1))?;
-        *suggestions_visible = false;
+    clear_prompt_panel(rendered_panel_lines)?;
+
+    if !panel_lines.is_empty() {
+        execute!(io::stdout(), MoveDown(1), MoveToColumn(0))?;
+        for (idx, line) in panel_lines.iter().enumerate() {
+            execute!(io::stdout(), Clear(ClearType::CurrentLine))?;
+            print!("{}", fit_terminal_line(line).dark_grey());
+            if idx + 1 < panel_lines.len() {
+                execute!(io::stdout(), MoveDown(1), MoveToColumn(0))?;
+            }
+        }
+        execute!(io::stdout(), MoveUp(panel_lines.len() as u16), MoveToColumn(0))?;
+        *rendered_panel_lines = panel_lines.len();
     }
 
     let prompt_prefix_cols = 2usize; // "> "
@@ -1336,10 +1345,21 @@ fn render_prompt_with_suggestions(
     io::stdout().flush()
 }
 
-fn clear_suggestion_line(suggestions_visible: &mut bool) -> io::Result<()> {
-    if *suggestions_visible {
-        execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine), MoveUp(1))?;
-        *suggestions_visible = false;
+fn clear_prompt_panel(rendered_panel_lines: &mut usize) -> io::Result<()> {
+    if *rendered_panel_lines > 0 {
+        execute!(io::stdout(), MoveDown(1), MoveToColumn(0))?;
+        for idx in 0..*rendered_panel_lines {
+            execute!(io::stdout(), Clear(ClearType::CurrentLine))?;
+            if idx + 1 < *rendered_panel_lines {
+                execute!(io::stdout(), MoveDown(1), MoveToColumn(0))?;
+            }
+        }
+        execute!(
+            io::stdout(),
+            MoveUp(*rendered_panel_lines as u16),
+            MoveToColumn(0)
+        )?;
+        *rendered_panel_lines = 0;
     }
     Ok(())
 }
@@ -1504,54 +1524,41 @@ fn filtered_command_suggestions(input: &str) -> Vec<(&'static str, &'static str)
         .collect()
 }
 
-fn build_command_hint(input: &str, selected_index: usize) -> Option<String> {
-    if !input.starts_with('/') {
-        return None;
-    }
-
-    let matches = filtered_command_suggestions(input);
-    if matches.is_empty() {
-        return Some("commands: (no matches)".to_string());
-    }
-
-    let safe = selected_index.min(matches.len().saturating_sub(1));
-    let mut parts = Vec::new();
-    for (idx, (cmd, _)) in matches.iter().take(5).enumerate() {
-        let rendered = if idx == safe {
-            format!("[{cmd}]")
-        } else {
-            (*cmd).to_string()
-        };
-        parts.push(rendered);
-    }
-    if matches.len() > 5 {
-        parts.push("...".to_string());
-    }
-
-    Some(format!(
-        "commands: {}    selected: {} - {}",
-        parts.join("  "),
-        matches[safe].0,
-        matches[safe].1
-    ))
-}
-
-fn build_prompt_hint(
+fn build_prompt_panel(
     input: &str,
     selected_index: usize,
     auto_edit: bool,
     current_model: &str,
-) -> Option<String> {
+) -> Vec<String> {
     let status = format!(
         "{} auto-edit: {} (shift + tab)   ~= {}",
         if auto_edit { "▶" } else { "⏸" },
         if auto_edit { "on" } else { "off" },
         current_model
     );
+    let mut lines = vec![status];
 
-    if let Some(command_hint) = build_command_hint(input, selected_index) {
-        return Some(format!("{status}   |   {command_hint}"));
+    if !input.starts_with('/') {
+        return lines;
     }
 
-    Some(status)
+    let matches = filtered_command_suggestions(input);
+    if matches.is_empty() {
+        lines.push("slash commands: (no matches)".to_string());
+        return lines;
+    }
+
+    lines.push("slash commands:".to_string());
+    let safe = selected_index.min(matches.len().saturating_sub(1));
+    let display_limit = 6usize;
+    for (idx, (cmd, description)) in matches.iter().take(display_limit).enumerate() {
+        let marker = if idx == safe { ">" } else { " " };
+        lines.push(format!("  {marker} {cmd:<18} {description}"));
+    }
+    if matches.len() > display_limit {
+        lines.push(format!("    ... +{} more", matches.len() - display_limit));
+    }
+    lines.push("    ↑/↓ navigate  Tab autocomplete  Enter run".to_string());
+
+    lines
 }

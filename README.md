@@ -28,7 +28,8 @@ Implemented now:
 - Inline prompt supports rich key controls (history, cursor movement, word/line deletion)
 - `Shift+Tab` toggles auto-edit mode, shown in the inline prompt status row
 - Inline prompt supports slash-command suggestions with descriptions while typing `/...`
-- `Up/Down` navigates command suggestions and `Tab/Enter` accepts the selected command
+- Slash suggestions render as a vertical list under the prompt (no horizontal scrolling)
+- `Up/Down` navigates command suggestions, `Tab` autocompletes, and `Enter` runs exact slash commands
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)
 - File-edit and bash operations (including direct commands) require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
 - Auto-edit mode bypasses confirmations for the current session
