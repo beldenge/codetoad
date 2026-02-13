@@ -330,15 +330,9 @@ async fn search_text(
         .arg("--max-count")
         .arg(max_results.to_string())
         .arg("--no-require-git")
-        .arg("--follow")
-        .arg("--glob")
-        .arg("!.git/**")
-        .arg("--glob")
-        .arg("!node_modules/**")
-        .arg("--glob")
-        .arg("!.DS_Store")
-        .arg("--glob")
-        .arg("!*.log");
+        .arg("--follow");
+
+    apply_default_exclude_globs(&mut cmd);
 
     if !options.case_sensitive.unwrap_or(false) {
         cmd.arg("--ignore-case");
@@ -349,23 +343,7 @@ async fn search_text(
     if !options.regex.unwrap_or(false) {
         cmd.arg("--fixed-strings");
     }
-    if options.include_hidden.unwrap_or(false) {
-        cmd.arg("--hidden");
-    }
-    if let Some(include_pattern) = options.include_pattern.as_deref() {
-        cmd.arg("--glob").arg(include_pattern);
-    }
-    if let Some(exclude_pattern) = options.exclude_pattern.as_deref() {
-        cmd.arg("--glob").arg(format!("!{exclude_pattern}"));
-    }
-    if let Some(file_types) = &options.file_types {
-        for file_type in file_types {
-            let trimmed = file_type.trim().trim_start_matches('.');
-            if !trimmed.is_empty() {
-                cmd.arg("--glob").arg(format!("*.{trimmed}"));
-            }
-        }
-    }
+    apply_search_filters(&mut cmd, options);
 
     cmd.arg(query).arg(".");
 
@@ -418,33 +396,10 @@ async fn search_files(
     let mut cmd = Command::new("rg");
     cmd.arg("--files")
         .arg("--no-require-git")
-        .arg("--follow")
-        .arg("--glob")
-        .arg("!.git/**")
-        .arg("--glob")
-        .arg("!node_modules/**")
-        .arg("--glob")
-        .arg("!.DS_Store")
-        .arg("--glob")
-        .arg("!*.log");
+        .arg("--follow");
 
-    if options.include_hidden.unwrap_or(false) {
-        cmd.arg("--hidden");
-    }
-    if let Some(include_pattern) = options.include_pattern.as_deref() {
-        cmd.arg("--glob").arg(include_pattern);
-    }
-    if let Some(exclude_pattern) = options.exclude_pattern.as_deref() {
-        cmd.arg("--glob").arg(format!("!{exclude_pattern}"));
-    }
-    if let Some(file_types) = &options.file_types {
-        for file_type in file_types {
-            let trimmed = file_type.trim().trim_start_matches('.');
-            if !trimmed.is_empty() {
-                cmd.arg("--glob").arg(format!("*.{trimmed}"));
-            }
-        }
-    }
+    apply_default_exclude_globs(&mut cmd);
+    apply_search_filters(&mut cmd, options);
 
     cmd.arg(".");
 
@@ -479,6 +434,36 @@ async fn search_files(
     });
     results.truncate(max_results);
     Ok(results)
+}
+
+fn apply_default_exclude_globs(cmd: &mut Command) {
+    for pattern in ["!.git/**", "!node_modules/**", "!.DS_Store", "!*.log"] {
+        cmd.arg("--glob").arg(pattern);
+    }
+}
+
+fn apply_search_filters(cmd: &mut Command, options: &SearchOptions) {
+    if options.include_hidden.unwrap_or(false) {
+        cmd.arg("--hidden");
+    }
+    if let Some(include_pattern) = options.include_pattern.as_deref() {
+        cmd.arg("--glob").arg(include_pattern);
+    }
+    if let Some(exclude_pattern) = options.exclude_pattern.as_deref() {
+        cmd.arg("--glob").arg(format!("!{exclude_pattern}"));
+    }
+    append_file_type_globs(cmd, options.file_types.as_deref());
+}
+
+fn append_file_type_globs(cmd: &mut Command, file_types: Option<&[String]>) {
+    if let Some(file_types) = file_types {
+        for file_type in file_types {
+            let trimmed = file_type.trim().trim_start_matches('.');
+            if !trimmed.is_empty() {
+                cmd.arg("--glob").arg(format!("*.{trimmed}"));
+            }
+        }
+    }
 }
 
 fn normalize_file_path(path: &str) -> String {
