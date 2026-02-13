@@ -2,15 +2,13 @@
 
 `grok-build` is a Rust port of the core `grok-cli` coding-agent workflow.
 
-Planned enhancements are tracked in `TODOS.md`.
-
 It provides:
 - Provider-aware model client behavior:
   - xAI base URLs (`api.x.ai`) use the Responses API (non-deprecated path)
   - non-xAI OpenAI-compatible base URLs use Chat Completions payloads
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`, `search`, `create_todo_list`, `update_todo_list`)
 - Streaming terminal-native UI built with `crossterm`
-- Multimodal image input support (drag/drop paths, markdown image links, and `file://` paths)
+- Multimodal image input support from file paths (drag/drop paths, markdown image links, and `file://` paths)
 - Slash commands compatible with the TypeScript app:
   - `/help`
   - `/clear`
@@ -36,6 +34,7 @@ Implemented now:
 - Slash suggestions render as a vertical list under the prompt (no horizontal scrolling)
 - `Up/Down` navigates command suggestions, `Tab` autocompletes, and `Enter` runs exact slash commands
 - Inline input auto-detects image attachments from dropped paths/markdown image links and prints attachment confirmation before submit
+- Headless `--prompt` mode also detects image attachments from file paths in prompt text
 - Sessions are auto-saved to `.grok/sessions/*.json` during interactive usage
 - `/resume` opens an inline picker (same navigation style as model picker) to reload a saved session
 - Resume restores model/history/cwd/todo state and auto-edit/confirmation session flags
@@ -77,6 +76,7 @@ Implemented now:
 Not yet implemented:
 - MCP server integration
 - Morph fast-apply tool
+- Clipboard screenshot paste to image attachment flow
 - Full TypeScript Ink UI parity details (command suggestion popup, rich markdown rendering)
 - Full OS-level shell sandboxing for arbitrary bash commands beyond working-directory boundary enforcement
 
