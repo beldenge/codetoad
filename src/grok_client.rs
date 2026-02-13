@@ -131,6 +131,45 @@ impl GrokClient {
         Ok(content.trim().to_string())
     }
 
+    async fn post_json(
+        &self,
+        endpoint: &str,
+        payload: &impl Serialize,
+        request_context: &str,
+        body_context: &str,
+    ) -> Result<(StatusCode, String)> {
+        let response = self
+            .http
+            .post(format!("{}/{}", self.base_url, endpoint))
+            .bearer_auth(&self.api_key)
+            .json(payload)
+            .send()
+            .await
+            .with_context(|| format!("Failed sending {request_context}"))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .with_context(|| format!("Failed reading {body_context}"))?;
+        Ok((status, body))
+    }
+
+    async fn post_json_stream(
+        &self,
+        endpoint: &str,
+        payload: &impl Serialize,
+        request_context: &str,
+    ) -> Result<reqwest::Response> {
+        self.http
+            .post(format!("{}/{}", self.base_url, endpoint))
+            .bearer_auth(&self.api_key)
+            .json(payload)
+            .send()
+            .await
+            .with_context(|| format!("Failed sending {request_context}"))
+    }
+
     async fn chat_with_chat_completions(
         &self,
         messages: &[ChatMessage],
@@ -145,21 +184,14 @@ impl GrokClient {
             self.max_tokens,
             search_mode,
         );
-
-        let response = self
-            .http
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed sending chat completion request")?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed reading chat response body")?;
+        let (status, body) = self
+            .post_json(
+                "chat/completions",
+                &payload,
+                "chat completion request",
+                "chat response body",
+            )
+            .await?;
         validate_status(status, &body)?;
         let parsed = serde_json::from_str::<ChatCompletionResponse>(&body)
             .context("Failed parsing chat completion response")?;
@@ -181,21 +213,14 @@ impl GrokClient {
             self.max_tokens,
             search_mode,
         );
-
-        let response = self
-            .http
-            .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed sending responses request")?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed reading responses body")?;
+        let (status, body) = self
+            .post_json(
+                "responses",
+                &payload,
+                "responses request",
+                "responses body",
+            )
+            .await?;
         validate_status(status, &body)?;
         convert_responses_body_to_chat_completion(&body)
     }
@@ -219,15 +244,13 @@ impl GrokClient {
             self.max_tokens,
             search_mode,
         );
-
         let response = self
-            .http
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed sending streaming chat completion request")?;
+            .post_json_stream(
+                "chat/completions",
+                &payload,
+                "streaming chat completion request",
+            )
+            .await?;
 
         let status = response.status();
         if status != StatusCode::OK {
@@ -288,15 +311,9 @@ impl GrokClient {
             self.max_tokens,
             search_mode,
         );
-
         let response = self
-            .http
-            .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .context("Failed sending streaming responses request")?;
+            .post_json_stream("responses", &payload, "streaming responses request")
+            .await?;
 
         let status = response.status();
         if status != StatusCode::OK {
