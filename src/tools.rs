@@ -666,31 +666,42 @@ async fn execute_bash_tool(args: &Value) -> Result<ToolResult> {
 pub async fn execute_bash_command(command: &str) -> Result<ToolResult> {
     let trimmed = command.trim();
     if let Some(path) = trimmed.strip_prefix("cd ").map(str::trim) {
-        let new_dir = tool_context::set_current_dir(path)?;
-        return Ok(ToolResult::ok(format!(
-            "Changed directory to: {}",
-            new_dir.display()
-        )));
+        return match tool_context::set_current_dir(path) {
+            Ok(new_dir) => Ok(ToolResult::ok(format!(
+                "Changed directory to: {}",
+                new_dir.display()
+            ))),
+            Err(err) => Ok(ToolResult::err(err.to_string())),
+        };
     }
 
-    let cwd = tool_context::current_dir()?;
+    let cwd = match tool_context::current_dir() {
+        Ok(cwd) => cwd,
+        Err(err) => return Ok(ToolResult::err(err.to_string())),
+    };
     let output = if cfg!(windows) {
-        Command::new("powershell")
+        match Command::new("powershell")
             .arg("-NoProfile")
             .arg("-Command")
             .arg(trimmed)
             .current_dir(&cwd)
             .output()
             .await
-            .with_context(|| format!("Failed running command: {trimmed}"))?
+        {
+            Ok(output) => output,
+            Err(err) => return Ok(ToolResult::err(format!("Failed running command: {trimmed}: {err}"))),
+        }
     } else {
-        Command::new("sh")
+        match Command::new("sh")
             .arg("-lc")
             .arg(trimmed)
             .current_dir(&cwd)
             .output()
             .await
-            .with_context(|| format!("Failed running command: {trimmed}"))?
+        {
+            Ok(output) => output,
+            Err(err) => return Ok(ToolResult::err(format!("Failed running command: {trimmed}: {err}"))),
+        }
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();

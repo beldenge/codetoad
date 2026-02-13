@@ -43,6 +43,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/tool_context.rs`
   - shared tool execution context (project root + session working directory)
   - central path resolution and `cd` state used by file/shell/search tools
+  - enforces canonical project-root containment for file paths and working-directory changes
 - `src/git_ops.rs`
   - shared `commit-and-push` workflow used by headless and inline entrypoints
 - `src/agent.rs`
