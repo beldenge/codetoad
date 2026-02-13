@@ -35,6 +35,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - serde request/response DTOs
 - `src/agent.rs`
   - ReAct-style loop and tool execution orchestration
+  - session-scoped confirmation routing for file/bash operations
 - `src/tools.rs`
   - `view_file`, `create_file`, `str_replace_editor`, `bash`
 - `src/inline_ui.rs`
@@ -44,6 +45,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - tool lifecycle timeline (start/result + durations + response summary)
   - active generation cancellation via `Esc`/`Ctrl+C`
   - live status telemetry with approximate token counts and auto-edit mode indicator
+  - interactive tool confirmation prompts (`y/a/n`) and auto-edit bypass
 
 ## UI Direction
 

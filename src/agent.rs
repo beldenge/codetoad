@@ -8,7 +8,9 @@ use crate::tools::{ToolResult, execute_tool};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::path::Path;
+use std::sync::Arc;
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
@@ -18,10 +20,32 @@ pub struct ToolCallSummary {
     pub arguments: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmationOperation {
+    File,
+    Bash,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConfirmationDecision {
+    Approve {
+        tool_call_id: String,
+        remember_for_session: bool,
+    },
+    Reject {
+        tool_call_id: String,
+        feedback: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     Content(String),
     TokenCount(usize),
+    ConfirmationRequest {
+        tool_call: ToolCallSummary,
+        operation: ConfirmationOperation,
+    },
     ToolCalls(Vec<ToolCallSummary>),
     ToolResult {
         tool_call: ToolCallSummary,
@@ -45,6 +69,9 @@ pub struct Agent {
     system_prompt: String,
     max_tool_rounds: usize,
     tools: Vec<ChatTool>,
+    auto_edit_enabled: bool,
+    session_allow_file_ops: bool,
+    session_allow_bash_ops: bool,
 }
 
 impl Agent {
@@ -70,6 +97,9 @@ impl Agent {
             system_prompt,
             max_tool_rounds,
             tools: default_tools(),
+            auto_edit_enabled: false,
+            session_allow_file_ops: false,
+            session_allow_bash_ops: false,
         })
     }
 
@@ -79,6 +109,17 @@ impl Agent {
 
     pub fn set_model(&mut self, model: String) {
         self.client.set_model(model);
+    }
+
+    pub fn set_auto_edit_enabled(&mut self, enabled: bool) {
+        self.auto_edit_enabled = enabled;
+        if enabled {
+            self.session_allow_file_ops = true;
+            self.session_allow_bash_ops = true;
+        } else {
+            self.session_allow_file_ops = false;
+            self.session_allow_bash_ops = false;
+        }
     }
 
     pub fn reset_conversation(&mut self) {
@@ -154,6 +195,7 @@ impl Agent {
         user_message: String,
         cancel_token: CancellationToken,
         updates: mpsc::UnboundedSender<AgentEvent>,
+        confirmation_rx: Option<Arc<Mutex<mpsc::UnboundedReceiver<ConfirmationDecision>>>>,
     ) -> Result<()> {
         self.messages.push(ChatMessage {
             role: "user".to_string(),
@@ -286,6 +328,34 @@ impl Agent {
                     return Ok(());
                 }
 
+                let operation = confirmation_operation_for_tool(&tool_call.name);
+                if let Some(operation) = operation {
+                    let decision = self
+                        .confirm_tool_call(
+                            tool_call.clone(),
+                            operation,
+                            &updates,
+                            confirmation_rx.as_ref(),
+                            &cancel_token,
+                        )
+                        .await;
+                    if let Some(rejection_message) = decision {
+                        let result = ToolResult::err(rejection_message);
+                        self.messages.push(ChatMessage {
+                            role: "tool".to_string(),
+                            content: Some(result.content_for_model()),
+                            tool_calls: None,
+                            tool_call_id: Some(tool_call.id.clone()),
+                        });
+                        input_tokens = estimate_messages_tokens(&self.messages);
+                        updates.send(AgentEvent::TokenCount(input_tokens)).ok();
+                        updates
+                            .send(AgentEvent::ToolResult { tool_call, result })
+                            .ok();
+                        continue;
+                    }
+                }
+
                 let parsed_args = serde_json::from_str::<Value>(&tool_call.arguments)
                     .with_context(|| format!("Invalid tool call arguments for {}", tool_call.name))
                     .unwrap_or_else(|_| json!({}));
@@ -314,6 +384,74 @@ impl Agent {
             .ok();
         updates.send(AgentEvent::Done).ok();
         Ok(())
+    }
+
+    async fn confirm_tool_call(
+        &mut self,
+        tool_call: ToolCallSummary,
+        operation: ConfirmationOperation,
+        updates: &mpsc::UnboundedSender<AgentEvent>,
+        confirmation_rx: Option<&Arc<Mutex<mpsc::UnboundedReceiver<ConfirmationDecision>>>>,
+        cancel_token: &CancellationToken,
+    ) -> Option<String> {
+        if self.auto_edit_enabled {
+            return None;
+        }
+
+        if operation == ConfirmationOperation::File && self.session_allow_file_ops {
+            return None;
+        }
+        if operation == ConfirmationOperation::Bash && self.session_allow_bash_ops {
+            return None;
+        }
+
+        let confirmation_rx = confirmation_rx?;
+
+        updates
+            .send(AgentEvent::ConfirmationRequest {
+                tool_call: tool_call.clone(),
+                operation,
+            })
+            .ok();
+
+        loop {
+            if cancel_token.is_cancelled() {
+                return Some("Operation cancelled by user".to_string());
+            }
+
+            let decision = {
+                let mut guard = confirmation_rx.lock().await;
+                guard.recv().await
+            };
+
+            let Some(decision) = decision else {
+                return Some("Operation cancelled: confirmation channel closed".to_string());
+            };
+
+            match decision {
+                ConfirmationDecision::Approve {
+                    tool_call_id,
+                    remember_for_session,
+                } if tool_call_id == tool_call.id => {
+                    if remember_for_session {
+                        match operation {
+                            ConfirmationOperation::File => self.session_allow_file_ops = true,
+                            ConfirmationOperation::Bash => self.session_allow_bash_ops = true,
+                        }
+                    }
+                    return None;
+                }
+                ConfirmationDecision::Reject {
+                    tool_call_id,
+                    feedback,
+                } if tool_call_id == tool_call.id => {
+                    return Some(
+                        feedback.unwrap_or_else(|| "Operation cancelled by user".to_string()),
+                    );
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -536,6 +674,14 @@ fn should_use_search_for(message: &str) -> bool {
         "changelog",
     ];
     keywords.iter().any(|k| lowered.contains(k))
+}
+
+fn confirmation_operation_for_tool(tool_name: &str) -> Option<ConfirmationOperation> {
+    match tool_name {
+        "create_file" | "str_replace_editor" => Some(ConfirmationOperation::File),
+        "bash" => Some(ConfirmationOperation::Bash),
+        _ => None,
+    }
 }
 
 fn estimate_messages_tokens(messages: &[ChatMessage]) -> usize {

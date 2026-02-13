@@ -1,4 +1,6 @@
-use crate::agent::{Agent, AgentEvent, ToolCallSummary};
+use crate::agent::{
+    Agent, AgentEvent, ConfirmationDecision, ConfirmationOperation, ToolCallSummary,
+};
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
@@ -64,6 +66,7 @@ pub async fn run_inline(
 
     if let Some(initial) = initial_message {
         history.push(initial.clone());
+        agent.lock().await.set_auto_edit_enabled(auto_edit);
         handle_input(&initial, agent.clone(), settings.clone()).await?;
         current_model = agent.lock().await.current_model().to_string();
     }
@@ -80,6 +83,7 @@ pub async fn run_inline(
             break;
         }
         history.push(input.clone());
+        agent.lock().await.set_auto_edit_enabled(auto_edit);
         handle_input(&input, agent.clone(), settings.clone()).await?;
         current_model = agent.lock().await.current_model().to_string();
     }
@@ -164,15 +168,23 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     let _raw_guard = StreamRawModeGuard::new()?;
     let cancel_token = CancellationToken::new();
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (confirm_tx, confirm_rx) = mpsc::unbounded_channel::<ConfirmationDecision>();
+    let confirm_rx = Arc::new(Mutex::new(confirm_rx));
 
     let error_tx = agent_tx.clone();
     let task_cancel_token = cancel_token.clone();
+    let task_confirm_rx = confirm_rx.clone();
     let agent_for_task = agent.clone();
     tokio::spawn(async move {
         let result = agent_for_task
             .lock()
             .await
-            .process_user_message_stream(message, task_cancel_token, agent_tx)
+            .process_user_message_stream(
+                message,
+                task_cancel_token,
+                agent_tx,
+                Some(task_confirm_rx),
+            )
             .await;
         if let Err(err) = result {
             error_tx
@@ -253,6 +265,19 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
             }
             AgentEvent::TokenCount(count) => {
                 token_count = count;
+            }
+            AgentEvent::ConfirmationRequest {
+                tool_call,
+                operation,
+            } => {
+                if started_content {
+                    flush_markdown_pending(&mut renderer)?;
+                    println!();
+                    started_content = false;
+                }
+                clear_status_line(&mut status_width)?;
+                let decision = prompt_tool_confirmation(&tool_call, operation)?;
+                confirm_tx.send(decision).ok();
             }
             AgentEvent::ToolCalls(calls) => {
                 if started_content {
@@ -497,6 +522,93 @@ fn print_tool_result(call: ToolCallSummary, result: ToolResult) {
     }
 }
 
+fn prompt_tool_confirmation(
+    tool_call: &ToolCallSummary,
+    operation: ConfirmationOperation,
+) -> Result<ConfirmationDecision> {
+    println!();
+    println!(
+        "{} {}",
+        "◦".yellow(),
+        format!(
+            "Confirmation required: {}({})",
+            pretty_tool_name(&tool_call.name),
+            tool_target(tool_call)
+        )
+        .yellow()
+    );
+    println!("{}", format!("  operation: {}", confirmation_operation_label(operation)).dark_grey());
+    println!(
+        "{}",
+        format!("  details: {}", confirmation_detail(tool_call)).dark_grey()
+    );
+    println!(
+        "{}",
+        "  [y] approve once   [a] approve all for this session   [n]/[Esc] reject".dark_grey()
+    );
+    io::stdout().flush()?;
+
+    loop {
+        let event = event::read()?;
+        let CEvent::Key(key) = event else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                println!("{}", "  -> approved".dark_green());
+                return Ok(ConfirmationDecision::Approve {
+                    tool_call_id: tool_call.id.clone(),
+                    remember_for_session: false,
+                });
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                println!(
+                    "{}",
+                    format!(
+                        "  -> approved and remembered for {}",
+                        confirmation_operation_label(operation)
+                    )
+                    .dark_green()
+                );
+                return Ok(ConfirmationDecision::Approve {
+                    tool_call_id: tool_call.id.clone(),
+                    remember_for_session: true,
+                });
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                println!("{}", "  -> rejected".red());
+                return Ok(ConfirmationDecision::Reject {
+                    tool_call_id: tool_call.id.clone(),
+                    feedback: None,
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+fn confirmation_operation_label(operation: ConfirmationOperation) -> &'static str {
+    match operation {
+        ConfirmationOperation::File => "file operations",
+        ConfirmationOperation::Bash => "bash commands",
+    }
+}
+
+fn confirmation_detail(tool_call: &ToolCallSummary) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&tool_call.arguments) {
+        if let Some(command) = value.get("command").and_then(serde_json::Value::as_str) {
+            return format!("command: {command}");
+        }
+        if let Some(path) = value.get("path").and_then(serde_json::Value::as_str) {
+            return format!("path: {path}");
+        }
+    }
+    "operation details unavailable".to_string()
+}
+
 fn pretty_tool_name(name: &str) -> &str {
     match name {
         "view_file" => "Read",
@@ -525,7 +637,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Shift+Tab     Toggle auto-edit mode\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nActive Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\nInline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Shift+Tab     Toggle auto-edit mode (bypass confirmations)\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nConfirmation Controls:\n  y             Approve operation once\n  a             Approve this operation type for session\n  n / Esc       Reject operation\n\nActive Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\nInline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
