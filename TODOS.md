@@ -14,13 +14,14 @@ Backlog for upcoming parity and platform enhancements.
   - Implemented via automatic session saves plus `/resume` interactive picker.
   - Scope notes: session files are stored in `.grok/sessions/*.json` and restore model, message history, session cwd, todo state, and auto-edit/confirmation flags.
 
-- [ ] Store API keys in secure OS keychain/credential store (cross-platform)
+- [x] Store API keys in secure OS keychain/credential store (cross-platform)
   - Goal: avoid plaintext-only API key storage by default.
+  - Implemented secure keychain mode by default (`apiKeyStorage=keychain`) with plaintext fallback when keychain write is unavailable.
   - Platforms:
     - Windows Credential Manager
     - macOS Keychain
-    - Linux Secret Service (DBus/libsecret) with a clear fallback path when unavailable
-  - UX target: seamless first-run save and subsequent retrieval, with explicit user opt-in/opt-out.
+    - Linux Secret Service/libsecret
+  - UX: explicit opt-in/opt-out via `--api-key-storage keychain|plaintext`.
 
 - [ ] Add provider/model compatibility beyond Grok-only usage
   - Goal: support additional provider-compatible models while preserving current coding-agent UX and tool loop behavior.

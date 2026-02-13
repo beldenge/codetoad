@@ -60,6 +60,7 @@ Implemented now:
 - Settings loading/saving:
   - `~/.grok/user-settings.json`
   - `.grok/settings.json`
+  - API key storage mode supports secure keychain (default) with plaintext fallback/override
 - Custom instruction loading:
   - `.grok/GROK.md` (project)
   - `~/.grok/GROK.md` (global fallback)
@@ -110,6 +111,7 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 ```text
 --directory, -d
 --api-key, -k
+--api-key-storage [keychain|plaintext]
 --base-url, -u
 --model, -m
 --prompt, -p
@@ -120,9 +122,18 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 
 User settings are stored in `~/.grok/user-settings.json` and include:
 - `apiKey`
+- `apiKeyStorage` (`keychain` or `plaintext`)
 - `baseURL`
 - `defaultModel`
 - `models`
+
+API key behavior:
+- Default mode is `keychain`, which stores/retrieves API keys from the OS credential store:
+  - Windows Credential Manager
+  - macOS Keychain
+  - Linux Secret Service/libsecret
+- If keychain write is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
+- Set explicit mode with `--api-key-storage keychain` or `--api-key-storage plaintext`.
 
 Project settings are stored in `.grok/settings.json` and include:
 - `model`

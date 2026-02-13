@@ -28,6 +28,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - central auto-edit flag synchronization between UI runtime state and agent execution state
 - `src/cli.rs`
   - clap argument/subcommand definitions
+  - includes `--api-key-storage` mode selection (`keychain` or `plaintext`)
 - `src/slash_commands.rs`
   - canonical slash-command metadata, parsing, and suggestion/help helpers
 - `src/inline_prompt.rs`
@@ -39,6 +40,8 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - tool label/target formatting used by inline orchestration
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
+  - API key retrieval precedence: `GROK_API_KEY` env -> keychain (default mode) -> plaintext fallback
+  - keychain-backed storage with plaintext fallback and explicit storage-mode control
 - `src/session_store.rs`
   - session persistence helpers for saving/loading/listing `.grok/sessions/*.json`
   - validates session file version and normalizes session names

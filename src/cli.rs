@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -13,6 +13,9 @@ pub struct Cli {
 
     #[arg(short = 'k', long = "api-key", global = true)]
     pub api_key: Option<String>,
+
+    #[arg(long = "api-key-storage", value_enum, global = true)]
+    pub api_key_storage: Option<ApiKeyStorageArg>,
 
     #[arg(short = 'u', long = "base-url", global = true)]
     pub base_url: Option<String>,
@@ -44,4 +47,10 @@ pub enum Commands {
 #[derive(Debug, Subcommand)]
 pub enum GitCommands {
     CommitAndPush,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ApiKeyStorageArg {
+    Keychain,
+    Plaintext,
 }

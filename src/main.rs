@@ -5,13 +5,13 @@ use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
 use grok_build::agent::Agent;
 use grok_build::app_context::AppContext;
-use grok_build::cli::{Cli, Commands, GitCommands};
+use grok_build::cli::{ApiKeyStorageArg, Cli, Commands, GitCommands};
 use grok_build::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
     run_commit_and_push,
 };
 use grok_build::inline_ui;
-use grok_build::settings::SettingsManager;
+use grok_build::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
 use std::io;
 
 #[tokio::main]
@@ -26,9 +26,29 @@ async fn main() -> Result<()> {
     let cwd = std::env::current_dir().context("Failed to determine current directory")?;
 
     let mut settings = SettingsManager::load(&cwd)?;
+    if let Some(storage_arg) = cli.api_key_storage {
+        let mode = match storage_arg {
+            ApiKeyStorageArg::Keychain => ApiKeyStorageMode::Keychain,
+            ApiKeyStorageArg::Plaintext => ApiKeyStorageMode::Plaintext,
+        };
+        settings.update_api_key_storage_mode(mode)?;
+        println!("Set API key storage mode: {}", mode.as_str());
+    }
+
     if let Some(api_key) = &cli.api_key {
-        settings.update_user_api_key(api_key)?;
-        println!("Saved API key to ~/.grok/user-settings.json");
+        match settings.update_user_api_key(api_key)? {
+            ApiKeySaveLocation::Keychain => {
+                println!("Saved API key to secure OS keychain.");
+            }
+            ApiKeySaveLocation::PlaintextFallback => {
+                println!(
+                    "Saved API key to ~/.grok/user-settings.json (keychain unavailable; fallback active)."
+                );
+            }
+            ApiKeySaveLocation::Plaintext => {
+                println!("Saved API key to ~/.grok/user-settings.json (plaintext mode).");
+            }
+        }
     }
     if let Some(base_url) = &cli.base_url {
         settings.update_user_base_url(base_url)?;
@@ -41,7 +61,7 @@ async fn main() -> Result<()> {
         .or_else(|| settings.get_api_key())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "API key required. Set GROK_API_KEY, use --api-key, or set ~/.grok/user-settings.json"
+                "API key required. Set GROK_API_KEY, use --api-key, or configure settings/keychain."
             )
         })?;
     let base_url = cli

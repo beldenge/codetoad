@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use dirs::home_dir;
+use keyring::Entry;
+use keyring::Error as KeyringError;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,6 +9,8 @@ use std::path::{Path, PathBuf};
 const SETTINGS_VERSION: u32 = 1;
 const DEFAULT_BASE_URL: &str = "https://api.x.ai/v1";
 const DEFAULT_MODEL: &str = "grok-code-fast-1";
+const KEYRING_SERVICE: &str = "grok-build";
+const KEYRING_ACCOUNT: &str = "xai_api_key";
 
 fn default_models() -> Vec<String> {
     vec![
@@ -35,6 +39,8 @@ pub struct UserSettings {
     #[serde(rename = "defaultModel", alias = "default_model")]
     pub default_model: Option<String>,
     pub models: Option<Vec<String>>,
+    #[serde(rename = "apiKeyStorage", alias = "api_key_storage")]
+    pub api_key_storage: Option<ApiKeyStorageMode>,
     #[serde(rename = "settingsVersion", alias = "settings_version")]
     pub settings_version: Option<u32>,
 }
@@ -51,6 +57,29 @@ pub struct SettingsManager {
     project_settings_path: PathBuf,
     user_settings: UserSettings,
     project_settings: ProjectSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiKeyStorageMode {
+    Keychain,
+    Plaintext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiKeySaveLocation {
+    Keychain,
+    PlaintextFallback,
+    Plaintext,
+}
+
+impl ApiKeyStorageMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keychain => "keychain",
+            Self::Plaintext => "plaintext",
+        }
+    }
 }
 
 impl SettingsManager {
@@ -76,6 +105,7 @@ impl SettingsManager {
         };
 
         manager.ensure_default_files()?;
+        manager.maybe_migrate_plaintext_api_key_to_keychain()?;
         Ok(manager)
     }
 
@@ -90,6 +120,9 @@ impl SettingsManager {
             }
             if self.user_settings.models.is_none() {
                 self.user_settings.models = Some(default_models());
+            }
+            if self.user_settings.api_key_storage.is_none() {
+                self.user_settings.api_key_storage = Some(ApiKeyStorageMode::Keychain);
             }
             self.save_user()?;
         }
@@ -115,9 +148,20 @@ impl SettingsManager {
     }
 
     pub fn get_api_key(&self) -> Option<String> {
-        std::env::var("GROK_API_KEY")
-            .ok()
-            .or_else(|| self.user_settings.api_key.clone())
+        if let Ok(from_env) = std::env::var("GROK_API_KEY")
+            && !from_env.trim().is_empty()
+        {
+            return Some(from_env);
+        }
+
+        if self.get_api_key_storage_mode() == ApiKeyStorageMode::Keychain
+            && let Ok(Some(from_keychain)) = load_api_key_from_keychain()
+            && !from_keychain.trim().is_empty()
+        {
+            return Some(from_keychain);
+        }
+
+        self.user_settings.api_key.clone()
     }
 
     pub fn get_base_url(&self) -> String {
@@ -152,9 +196,49 @@ impl SettingsManager {
         self.save_project()
     }
 
-    pub fn update_user_api_key(&mut self, api_key: &str) -> Result<()> {
-        self.user_settings.api_key = Some(api_key.to_string());
-        self.save_user()
+    pub fn get_api_key_storage_mode(&self) -> ApiKeyStorageMode {
+        self.user_settings
+            .api_key_storage
+            .unwrap_or(ApiKeyStorageMode::Keychain)
+    }
+
+    pub fn update_api_key_storage_mode(&mut self, mode: ApiKeyStorageMode) -> Result<()> {
+        self.user_settings.api_key_storage = Some(mode);
+        match mode {
+            ApiKeyStorageMode::Keychain => {
+                self.maybe_migrate_plaintext_api_key_to_keychain()?;
+                self.save_user()
+            }
+            ApiKeyStorageMode::Plaintext => {
+                if self.user_settings.api_key.is_none()
+                    && let Ok(Some(key)) = load_api_key_from_keychain()
+                {
+                    self.user_settings.api_key = Some(key);
+                }
+                self.save_user()
+            }
+        }
+    }
+
+    pub fn update_user_api_key(&mut self, api_key: &str) -> Result<ApiKeySaveLocation> {
+        match self.get_api_key_storage_mode() {
+            ApiKeyStorageMode::Keychain => {
+                if store_api_key_in_keychain(api_key).is_ok() {
+                    self.user_settings.api_key = None;
+                    self.save_user()?;
+                    Ok(ApiKeySaveLocation::Keychain)
+                } else {
+                    self.user_settings.api_key = Some(api_key.to_string());
+                    self.save_user()?;
+                    Ok(ApiKeySaveLocation::PlaintextFallback)
+                }
+            }
+            ApiKeyStorageMode::Plaintext => {
+                self.user_settings.api_key = Some(api_key.to_string());
+                self.save_user()?;
+                Ok(ApiKeySaveLocation::Plaintext)
+            }
+        }
     }
 
     pub fn update_user_base_url(&mut self, base_url: &str) -> Result<()> {
@@ -173,7 +257,27 @@ fn migrate_user_settings(settings: &mut UserSettings) {
     if settings.models.is_none() {
         settings.models = Some(default_models());
     }
+    if settings.api_key_storage.is_none() {
+        settings.api_key_storage = Some(ApiKeyStorageMode::Keychain);
+    }
     settings.settings_version = Some(SETTINGS_VERSION);
+}
+
+impl SettingsManager {
+    fn maybe_migrate_plaintext_api_key_to_keychain(&mut self) -> Result<()> {
+        if self.get_api_key_storage_mode() != ApiKeyStorageMode::Keychain {
+            return Ok(());
+        }
+        let Some(api_key) = self.user_settings.api_key.clone() else {
+            return Ok(());
+        };
+
+        if store_api_key_in_keychain(&api_key).is_ok() {
+            self.user_settings.api_key = None;
+            self.save_user()?;
+        }
+        Ok(())
+    }
 }
 
 fn ensure_parent_dir(path: &Path) -> Result<()> {
@@ -206,4 +310,24 @@ where
         serde_json::to_string_pretty(value).context("Failed serializing settings JSON")?;
     fs::write(path, serialized).with_context(|| format!("Failed writing {}", path.display()))?;
     Ok(())
+}
+
+fn keyring_entry() -> std::result::Result<Entry, KeyringError> {
+    Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
+}
+
+fn store_api_key_in_keychain(api_key: &str) -> Result<()> {
+    let entry = keyring_entry().context("Failed opening keychain entry")?;
+    entry
+        .set_password(api_key)
+        .context("Failed storing API key in keychain")
+}
+
+fn load_api_key_from_keychain() -> Result<Option<String>> {
+    let entry = keyring_entry().context("Failed opening keychain entry")?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(err) => Err(anyhow::anyhow!(err).context("Failed loading API key from keychain")),
+    }
 }
