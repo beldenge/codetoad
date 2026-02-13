@@ -2,11 +2,11 @@ use crate::agent::{Agent, AgentEvent, ToolCallSummary};
 use crate::settings::SettingsManager;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
-use crossterm::cursor::MoveLeft;
+use crossterm::cursor::{MoveDown, MoveLeft, MoveToColumn, MoveUp};
 use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::style::Stylize;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode};
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Instant;
@@ -465,7 +465,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInput controls:\n  Up/Down       History\n  Left/Right    Move cursor\n  Tab           Slash-command completion\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInput controls:\n  Up/Down       History\n  Left/Right    Move cursor\n  Tab           Slash-command completion (cycles matches)\n  /...          Live command suggestion row\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
@@ -832,7 +832,14 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
     let mut completion_prefix = String::new();
     let mut completion_matches: Vec<&'static str> = Vec::new();
     let mut completion_index = 0usize;
-    render_input_line(&input, cursor)?;
+    let mut suggestions_visible = false;
+    render_prompt_with_suggestions(
+        &input,
+        cursor,
+        build_command_hint(&input, &completion_prefix, &completion_matches, completion_index)
+            .as_deref(),
+        &mut suggestions_visible,
+    )?;
 
     loop {
         let event = event::read()?;
@@ -845,6 +852,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
 
         match key.code {
             KeyCode::Enter => {
+                clear_suggestion_line(&mut suggestions_visible)?;
                 disable_raw_mode()?;
                 print!("\r\n");
                 io::stdout().flush()?;
@@ -853,6 +861,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if input.is_empty() {
                     if ctrl_c_armed {
+                        clear_suggestion_line(&mut suggestions_visible)?;
                         disable_raw_mode()?;
                         print!("\r\n");
                         io::stdout().flush()?;
@@ -870,6 +879,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
             }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if input.is_empty() {
+                    clear_suggestion_line(&mut suggestions_visible)?;
                     disable_raw_mode()?;
                     print!("\r\n");
                     io::stdout().flush()?;
@@ -1006,18 +1016,54 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
             }
         }
 
-        render_input_line(&input, cursor)?;
+        let hint = build_command_hint(
+            &input,
+            &completion_prefix,
+            &completion_matches,
+            completion_index,
+        );
+        render_prompt_with_suggestions(
+            &input,
+            cursor,
+            hint.as_deref(),
+            &mut suggestions_visible,
+        )?;
     }
 }
 
-fn render_input_line(input: &str, cursor: usize) -> io::Result<()> {
-    print!("\r\x1b[2K{} {}", ">".cyan(), input);
-    print!("\x1b[K");
+fn render_prompt_with_suggestions(
+    input: &str,
+    cursor: usize,
+    suggestion: Option<&str>,
+    suggestions_visible: &mut bool,
+) -> io::Result<()> {
+    execute!(io::stdout(), MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+    print!("{} {}", ">".cyan(), input);
+    execute!(io::stdout(), Clear(ClearType::UntilNewLine))?;
+
+    if let Some(text) = suggestion {
+        execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+        print!("{}", text.dark_grey());
+        execute!(io::stdout(), MoveUp(1))?;
+        *suggestions_visible = true;
+    } else if *suggestions_visible {
+        execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine), MoveUp(1))?;
+        *suggestions_visible = false;
+    }
+
     let tail = input[cursor..].chars().count();
     if tail > 0 {
         execute!(io::stdout(), MoveLeft(tail as u16))?;
     }
     io::stdout().flush()
+}
+
+fn clear_suggestion_line(suggestions_visible: &mut bool) -> io::Result<()> {
+    if *suggestions_visible {
+        execute!(io::stdout(), MoveDown(1), MoveToColumn(0), Clear(ClearType::CurrentLine), MoveUp(1))?;
+        *suggestions_visible = false;
+    }
+    Ok(())
 }
 
 fn prev_boundary(input: &str, cursor: usize) -> usize {
@@ -1085,6 +1131,44 @@ fn slash_matches(prefix: &str) -> Vec<&'static str> {
         .copied()
         .filter(|cmd| cmd.starts_with(prefix))
         .collect()
+}
+
+fn build_command_hint(
+    input: &str,
+    completion_prefix: &str,
+    completion_matches: &[&'static str],
+    completion_index: usize,
+) -> Option<String> {
+    if !input.starts_with('/') {
+        return None;
+    }
+
+    let prefix = input.trim();
+    let matches = slash_matches(prefix);
+    if matches.is_empty() {
+        return Some("commands: (no matches)".to_string());
+    }
+
+    let active_index = if completion_prefix == prefix && !completion_matches.is_empty() {
+        Some(completion_index % completion_matches.len())
+    } else {
+        None
+    };
+
+    let mut parts = Vec::new();
+    for (idx, cmd) in matches.iter().take(5).enumerate() {
+        let rendered = if active_index == Some(idx) {
+            format!("[{cmd}]")
+        } else {
+            (*cmd).to_string()
+        };
+        parts.push(rendered);
+    }
+    if matches.len() > 5 {
+        parts.push("...".to_string());
+    }
+
+    Some(format!("commands: {}", parts.join("  ")))
 }
 
 fn reset_completion(
