@@ -117,87 +117,110 @@ async fn handle_input(
     settings: Arc<Mutex<SettingsManager>>,
 ) -> Result<()> {
     if let Some(command) = parse_slash_command(input) {
-        match command {
-            ParsedSlashCommand::Help => {
-                println!("{}", help_text());
-            }
-            ParsedSlashCommand::Clear => {
-                agent.lock().await.reset_conversation();
-                clear_screen();
-                print_logo_and_tips();
-            }
-            ParsedSlashCommand::Models => {
-                let available = settings.lock().await.get_available_models();
-                let current = agent.lock().await.current_model().to_string();
-                match select_model_inline(&available, &current)? {
-                    Some(model) => {
-                        agent.lock().await.set_model(model.clone());
-                        settings.lock().await.update_project_model(&model)?;
-                        println!("Switched to model: {model}");
-                    }
-                    None => {
-                        println!("Model selection cancelled.");
-                    }
-                }
-            }
-            ParsedSlashCommand::SetModel(model) => {
-                let available = settings.lock().await.get_available_models();
-                if available.iter().any(|m| m == &model) {
-                    agent.lock().await.set_model(model.clone());
-                    settings.lock().await.update_project_model(&model)?;
-                    println!("Switched to model: {model}");
-                } else {
-                    println!("Invalid model: {model}");
-                    println!("Available: {}", available.join(", "));
-                }
-            }
-            ParsedSlashCommand::CommitAndPush => {
-                run_commit_and_push(agent).await?;
-            }
-            ParsedSlashCommand::Exit => {}
-        }
-        return Ok(());
+        return handle_slash_command(command, agent, settings).await;
     }
 
     if is_direct_command(input) {
-        let tool_call = ToolCallSummary {
-            id: "bash_inline_direct".to_string(),
-            name: "bash".to_string(),
-            arguments: format!(r#"{{"command":"{}"}}"#, input.replace('"', "\\\"")),
-        };
-
-        let auto_approved = {
-            agent
-                .lock()
-                .await
-                .is_operation_auto_approved(ConfirmationOperation::Bash)
-        };
-        if !auto_edit_enabled && !auto_approved {
-            match prompt_tool_confirmation(&tool_call, ConfirmationOperation::Bash)? {
-                ConfirmationDecision::Approve {
-                    remember_for_session,
-                    ..
-                } => {
-                    if remember_for_session {
-                        agent
-                            .lock()
-                            .await
-                            .remember_operation_for_session(ConfirmationOperation::Bash);
-                    }
-                }
-                ConfirmationDecision::Reject { .. } => {
-                    print_tool_result(tool_call, ToolResult::err("Operation cancelled by user"));
-                    return Ok(());
-                }
-            }
-        }
-
-        let result = execute_bash_command(input).await?;
-        print_tool_result(tool_call, result);
-        return Ok(());
+        return handle_direct_command(input, auto_edit_enabled, agent).await;
     }
 
     stream_agent_message(input.to_string(), agent).await
+}
+
+async fn handle_slash_command(
+    command: ParsedSlashCommand,
+    agent: Arc<Mutex<Agent>>,
+    settings: Arc<Mutex<SettingsManager>>,
+) -> Result<()> {
+    match command {
+        ParsedSlashCommand::Help => {
+            println!("{}", help_text());
+        }
+        ParsedSlashCommand::Clear => {
+            agent.lock().await.reset_conversation();
+            clear_screen();
+            print_logo_and_tips();
+        }
+        ParsedSlashCommand::Models => {
+            let available = settings.lock().await.get_available_models();
+            let current = agent.lock().await.current_model().to_string();
+            match select_model_inline(&available, &current)? {
+                Some(model) => {
+                    set_active_model(model, agent, settings).await?;
+                }
+                None => {
+                    println!("Model selection cancelled.");
+                }
+            }
+        }
+        ParsedSlashCommand::SetModel(model) => {
+            let available = settings.lock().await.get_available_models();
+            if available.iter().any(|candidate| candidate == &model) {
+                set_active_model(model, agent, settings).await?;
+            } else {
+                println!("Invalid model: {model}");
+                println!("Available: {}", available.join(", "));
+            }
+        }
+        ParsedSlashCommand::CommitAndPush => {
+            run_commit_and_push(agent).await?;
+        }
+        ParsedSlashCommand::Exit => {}
+    }
+    Ok(())
+}
+
+async fn set_active_model(
+    model: String,
+    agent: Arc<Mutex<Agent>>,
+    settings: Arc<Mutex<SettingsManager>>,
+) -> Result<()> {
+    agent.lock().await.set_model(model.clone());
+    settings.lock().await.update_project_model(&model)?;
+    println!("Switched to model: {model}");
+    Ok(())
+}
+
+async fn handle_direct_command(
+    input: &str,
+    auto_edit_enabled: bool,
+    agent: Arc<Mutex<Agent>>,
+) -> Result<()> {
+    let tool_call = ToolCallSummary {
+        id: "bash_inline_direct".to_string(),
+        name: "bash".to_string(),
+        arguments: format!(r#"{{"command":"{}"}}"#, input.replace('"', "\\\"")),
+    };
+
+    let auto_approved = {
+        agent
+            .lock()
+            .await
+            .is_operation_auto_approved(ConfirmationOperation::Bash)
+    };
+    if !auto_edit_enabled && !auto_approved {
+        match prompt_tool_confirmation(&tool_call, ConfirmationOperation::Bash)? {
+            ConfirmationDecision::Approve {
+                remember_for_session,
+                ..
+            } => {
+                if remember_for_session {
+                    agent
+                        .lock()
+                        .await
+                        .remember_operation_for_session(ConfirmationOperation::Bash);
+                }
+            }
+            ConfirmationDecision::Reject { .. } => {
+                print_tool_result(tool_call, ToolResult::err("Operation cancelled by user"));
+                return Ok(());
+            }
+        }
+    }
+
+    let result = execute_bash_command(input).await?;
+    print_tool_result(tool_call, result);
+    Ok(())
 }
 
 async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Result<()> {
