@@ -1,17 +1,17 @@
 use super::ToolResult;
-use crate::tool_context;
+use crate::tool_context::ToolContext;
 use anyhow::{Context, Result};
 use serde_json::Value;
 use similar::TextDiff;
 use std::fs;
 
-pub(super) fn execute_view_file(args: &Value) -> Result<ToolResult> {
+pub(super) fn execute_view_file(args: &Value, tool_context: &ToolContext) -> Result<ToolResult> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
         .context("Missing 'path' argument")?;
 
-    let resolved = tool_context::resolve_path(path)?;
+    let resolved = tool_context.resolve_path(path)?;
     if !resolved.exists() {
         return Ok(ToolResult::err(format!(
             "File or directory not found: {path}"
@@ -85,7 +85,7 @@ pub(super) fn execute_view_file(args: &Value) -> Result<ToolResult> {
     )))
 }
 
-pub(super) fn execute_create_file(args: &Value) -> Result<ToolResult> {
+pub(super) fn execute_create_file(args: &Value, tool_context: &ToolContext) -> Result<ToolResult> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -95,7 +95,7 @@ pub(super) fn execute_create_file(args: &Value) -> Result<ToolResult> {
         .and_then(Value::as_str)
         .context("Missing 'content' argument")?;
 
-    let resolved = tool_context::resolve_path(path)?;
+    let resolved = tool_context.resolve_path(path)?;
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create parent directory {}", parent.display()))?;
@@ -111,7 +111,10 @@ pub(super) fn execute_create_file(args: &Value) -> Result<ToolResult> {
     Ok(ToolResult::ok(format!("Created {path}\n{created}")))
 }
 
-pub(super) fn execute_str_replace_editor(args: &Value) -> Result<ToolResult> {
+pub(super) fn execute_str_replace_editor(
+    args: &Value,
+    tool_context: &ToolContext,
+) -> Result<ToolResult> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
@@ -129,7 +132,7 @@ pub(super) fn execute_str_replace_editor(args: &Value) -> Result<ToolResult> {
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    let resolved = tool_context::resolve_path(path)?;
+    let resolved = tool_context.resolve_path(path)?;
     if !resolved.exists() {
         return Ok(ToolResult::err(format!("File not found: {path}")));
     }

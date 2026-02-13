@@ -1,5 +1,5 @@
 use super::ToolResult;
-use crate::tool_context;
+use crate::tool_context::ToolContext;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
@@ -42,7 +42,10 @@ struct FileSearchResult {
     score: i32,
 }
 
-pub(super) async fn execute_search(args: &Value) -> Result<ToolResult> {
+pub(super) async fn execute_search(
+    args: &Value,
+    tool_context: &ToolContext,
+) -> Result<ToolResult> {
     let options: SearchOptions =
         serde_json::from_value(args.clone()).context("Invalid search arguments")?;
     let query = options.query.trim();
@@ -66,10 +69,10 @@ pub(super) async fn execute_search(args: &Value) -> Result<ToolResult> {
     let mut file_results = Vec::new();
 
     if matches!(search_type.as_str(), "text" | "both") {
-        text_results = search_text(query, &options, max_results).await?;
+        text_results = search_text(query, &options, max_results, tool_context).await?;
     }
     if matches!(search_type.as_str(), "files" | "both") {
-        file_results = search_files(query, &options, max_results).await?;
+        file_results = search_files(query, &options, max_results, tool_context).await?;
     }
 
     Ok(ToolResult::ok(format_search_results(
@@ -83,6 +86,7 @@ async fn search_text(
     query: &str,
     options: &SearchOptions,
     max_results: usize,
+    tool_context: &ToolContext,
 ) -> Result<Vec<SearchTextResult>> {
     let mut cmd = Command::new("rg");
     cmd.arg("--json")
@@ -112,7 +116,7 @@ async fn search_text(
     cmd.arg(query).arg(".");
 
     let output = cmd
-        .current_dir(tool_context::current_dir()?)
+        .current_dir(tool_context.current_dir())
         .output()
         .await
         .with_context(|| format!("Failed running search command for query '{query}'"))?;
@@ -157,6 +161,7 @@ async fn search_files(
     query: &str,
     options: &SearchOptions,
     max_results: usize,
+    tool_context: &ToolContext,
 ) -> Result<Vec<FileSearchResult>> {
     let mut cmd = Command::new("rg");
     cmd.arg("--files").arg("--no-require-git").arg("--follow");
@@ -167,7 +172,7 @@ async fn search_files(
     cmd.arg(".");
 
     let output = cmd
-        .current_dir(tool_context::current_dir()?)
+        .current_dir(tool_context.current_dir())
         .output()
         .await
         .context("Failed running file search command")?;

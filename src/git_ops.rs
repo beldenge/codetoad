@@ -1,5 +1,5 @@
 use crate::agent::Agent;
-use crate::tools::{ToolResult, execute_bash_command};
+use crate::tools::ToolResult;
 use anyhow::{Result, bail};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -42,7 +42,7 @@ pub async fn run_commit_and_push<F>(
 where
     F: FnMut(CommitAndPushEvent),
 {
-    let status = execute_bash_command("git status --porcelain").await?;
+    let status = run_agent_bash(&agent, "git status --porcelain").await?;
     if !status.success {
         bail!(
             "git status failed: {}",
@@ -61,7 +61,7 @@ where
     on_event(CommitAndPushEvent::ChangesDetected);
 
     let add_command = "git add .".to_string();
-    let add = execute_bash_command(&add_command).await?;
+    let add = run_agent_bash(&agent, &add_command).await?;
     on_event(CommitAndPushEvent::ToolResult {
         step: CommitAndPushStep::Add,
         command: add_command.clone(),
@@ -74,7 +74,7 @@ where
         );
     }
 
-    let diff = execute_bash_command("git diff --cached")
+    let diff = run_agent_bash(&agent, "git diff --cached")
         .await
         .ok()
         .and_then(|r| r.output)
@@ -107,7 +107,7 @@ where
     on_event(CommitAndPushEvent::GeneratedMessage(commit_message.clone()));
 
     let commit_command = format!("git commit -m \"{}\"", commit_message.replace('"', "\\\""));
-    let commit = execute_bash_command(&commit_command).await?;
+    let commit = run_agent_bash(&agent, &commit_command).await?;
     on_event(CommitAndPushEvent::ToolResult {
         step: CommitAndPushStep::Commit,
         command: commit_command.clone(),
@@ -121,7 +121,7 @@ where
     }
 
     let mut push_command = "git push".to_string();
-    let mut push = execute_bash_command(&push_command).await?;
+    let mut push = run_agent_bash(&agent, &push_command).await?;
     if !push.success
         && push
             .error
@@ -130,7 +130,7 @@ where
             .unwrap_or(false)
     {
         push_command = "git push -u origin HEAD".to_string();
-        push = execute_bash_command(&push_command).await?;
+        push = run_agent_bash(&agent, &push_command).await?;
     }
 
     on_event(CommitAndPushEvent::ToolResult {
@@ -146,4 +146,8 @@ where
     }
 
     Ok(CommitAndPushOutcome::Completed)
+}
+
+async fn run_agent_bash(agent: &Arc<Mutex<Agent>>, command: &str) -> Result<ToolResult> {
+    agent.lock().await.execute_bash_command(command).await
 }

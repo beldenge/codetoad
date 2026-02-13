@@ -2,8 +2,10 @@ use crate::tool_catalog::{
     TOOL_BASH, TOOL_CREATE_FILE, TOOL_CREATE_TODO_LIST, TOOL_SEARCH, TOOL_STR_REPLACE_EDITOR,
     TOOL_UPDATE_TODO_LIST, TOOL_VIEW_FILE,
 };
+use crate::tool_context::ToolContext;
 use anyhow::Result;
 use serde_json::Value;
+use std::path::PathBuf;
 
 mod bash_tool;
 mod file_ops;
@@ -13,9 +15,21 @@ mod todos;
 use self::bash_tool::execute_bash_tool;
 use self::file_ops::{execute_create_file, execute_str_replace_editor, execute_view_file};
 use self::search_tool::execute_search;
-use self::todos::{execute_create_todo_list, execute_update_todo_list};
+use self::todos::{TodoStore, execute_create_todo_list, execute_update_todo_list};
 
-pub use self::bash_tool::execute_bash_command;
+pub(crate) struct ToolSessionState {
+    tool_context: ToolContext,
+    todo_store: TodoStore,
+}
+
+impl ToolSessionState {
+    pub(crate) fn new(project_root: PathBuf) -> Result<Self> {
+        Ok(Self {
+            tool_context: ToolContext::new(project_root)?,
+            todo_store: TodoStore::default(),
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ToolResult {
@@ -54,15 +68,19 @@ pub fn tool_result_from_error(err: anyhow::Error) -> ToolResult {
     ToolResult::err(format!("{err:#}"))
 }
 
-pub async fn execute_tool(name: &str, args: &Value) -> ToolResult {
+pub(crate) async fn execute_tool(
+    name: &str,
+    args: &Value,
+    session: &mut ToolSessionState,
+) -> ToolResult {
     let result: Result<ToolResult> = match name {
-        TOOL_VIEW_FILE => execute_view_file(args),
-        TOOL_CREATE_FILE => execute_create_file(args),
-        TOOL_STR_REPLACE_EDITOR => execute_str_replace_editor(args),
-        TOOL_BASH => execute_bash_tool(args).await,
-        TOOL_SEARCH => execute_search(args).await,
-        TOOL_CREATE_TODO_LIST => execute_create_todo_list(args),
-        TOOL_UPDATE_TODO_LIST => execute_update_todo_list(args),
+        TOOL_VIEW_FILE => execute_view_file(args, &session.tool_context),
+        TOOL_CREATE_FILE => execute_create_file(args, &session.tool_context),
+        TOOL_STR_REPLACE_EDITOR => execute_str_replace_editor(args, &session.tool_context),
+        TOOL_BASH => execute_bash_tool(args, &mut session.tool_context).await,
+        TOOL_SEARCH => execute_search(args, &session.tool_context).await,
+        TOOL_CREATE_TODO_LIST => execute_create_todo_list(args, &mut session.todo_store),
+        TOOL_UPDATE_TODO_LIST => execute_update_todo_list(args, &mut session.todo_store),
         _ => Ok(ToolResult::err(format!("Unknown tool: {name}"))),
     };
 
@@ -70,4 +88,11 @@ pub async fn execute_tool(name: &str, args: &Value) -> ToolResult {
         Ok(tool_result) => tool_result,
         Err(error) => tool_result_from_error(error),
     }
+}
+
+pub(crate) async fn execute_bash_command(
+    command: &str,
+    session: &mut ToolSessionState,
+) -> Result<ToolResult> {
+    bash_tool::execute_bash_command(command, &mut session.tool_context).await
 }

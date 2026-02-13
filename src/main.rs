@@ -45,7 +45,6 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Failed to change directory to {}", directory.display()))?;
     }
     let cwd = std::env::current_dir().context("Failed to determine current directory")?;
-    tool_context::initialize(cwd.clone())?;
 
     let mut settings = SettingsManager::load(&cwd)?;
     if let Some(api_key) = &cli.api_key {

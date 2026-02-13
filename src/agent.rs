@@ -9,7 +9,7 @@ use crate::protocol::{
     ChatCompletionStreamChunk, ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction,
 };
 use crate::tool_catalog::{confirmation_operation_for_tool, default_tools};
-use crate::tools::{ToolResult, execute_tool};
+use crate::tools::{ToolResult, ToolSessionState, execute_bash_command, execute_tool};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -60,6 +60,7 @@ pub struct Agent<C: ModelClient = GrokClient> {
     system_prompt: String,
     max_tool_rounds: usize,
     tools: Vec<ChatTool>,
+    tool_session: ToolSessionState,
     auto_edit_enabled: bool,
     session_allow_file_ops: bool,
     session_allow_bash_ops: bool,
@@ -81,6 +82,7 @@ impl Agent<GrokClient> {
 impl<C: ModelClient> Agent<C> {
     pub fn with_client(client: C, max_tool_rounds: usize, cwd: &Path) -> Result<Self> {
         let system_prompt = build_system_prompt(cwd);
+        let tool_session = ToolSessionState::new(cwd.to_path_buf())?;
         let messages = vec![ChatMessage {
             role: "system".to_string(),
             content: Some(system_prompt.clone()),
@@ -94,6 +96,7 @@ impl<C: ModelClient> Agent<C> {
             system_prompt,
             max_tool_rounds,
             tools: default_tools(),
+            tool_session,
             auto_edit_enabled: false,
             session_allow_file_ops: false,
             session_allow_bash_ops: false,
@@ -149,6 +152,10 @@ impl<C: ModelClient> Agent<C> {
         self.client.plain_completion(prompt).await
     }
 
+    pub async fn execute_bash_command(&mut self, command: &str) -> Result<ToolResult> {
+        execute_bash_command(command, &mut self.tool_session).await
+    }
+
     pub async fn process_user_message(&mut self, user_message: &str) -> Result<String> {
         self.messages.push(ChatMessage {
             role: "user".to_string(),
@@ -182,7 +189,9 @@ impl<C: ModelClient> Agent<C> {
             if let Some(tool_calls) = assistant_tool_calls {
                 for call in tool_calls {
                     let parsed_args = parse_tool_arguments(&call.function.arguments);
-                    let result = execute_tool(&call.function.name, &parsed_args).await;
+                    let result =
+                        execute_tool(&call.function.name, &parsed_args, &mut self.tool_session)
+                            .await;
                     self.messages.push(ChatMessage {
                         role: "tool".to_string(),
                         content: Some(result.content_for_model()),
@@ -347,7 +356,8 @@ impl<C: ModelClient> Agent<C> {
                 }
 
                 let parsed_args = parse_tool_arguments(&tool_call.arguments);
-                let result = execute_tool(&tool_call.name, &parsed_args).await;
+                let result =
+                    execute_tool(&tool_call.name, &parsed_args, &mut self.tool_session).await;
 
                 self.messages.push(ChatMessage {
                     role: "tool".to_string(),

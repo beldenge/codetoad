@@ -61,7 +61,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `src/tool_catalog.rs`
   - canonical tool metadata (schemas, confirmation mapping, UI display labels)
 - `src/tool_context.rs`
-  - shared tool execution context (project root + session working directory)
+  - per-session tool context object (project root + session working directory)
   - central path resolution and `cd` state used by file/shell/search tools
   - enforces canonical project-root containment for file paths and working-directory changes
 - `src/git_ops.rs`
@@ -82,6 +82,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - `bash` execution + `cd` handling under project-root constraints
 - `src/tools/todos.rs`
   - `create_todo_list`, `update_todo_list`
+  - session-scoped in-memory todo store (no global static state)
 - `src/tools/search_tool.rs`
   - `search` tool execution (text/file/both modes via ripgrep)
   - shared result ranking and formatting for search output

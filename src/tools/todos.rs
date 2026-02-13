@@ -2,7 +2,6 @@ use super::ToolResult;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
-use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Deserialize)]
 struct TodoItem {
@@ -23,13 +22,12 @@ struct TodoUpdate {
     priority: Option<String>,
 }
 
-static TODO_ITEMS: OnceLock<Mutex<Vec<TodoItem>>> = OnceLock::new();
-
-fn todo_items() -> &'static Mutex<Vec<TodoItem>> {
-    TODO_ITEMS.get_or_init(|| Mutex::new(Vec::new()))
+#[derive(Debug, Default, Clone)]
+pub(crate) struct TodoStore {
+    items: Vec<TodoItem>,
 }
 
-pub(super) fn execute_create_todo_list(args: &Value) -> Result<ToolResult> {
+pub(super) fn execute_create_todo_list(args: &Value, store: &mut TodoStore) -> Result<ToolResult> {
     let todos_value = args.get("todos").cloned().context("Missing 'todos' argument")?;
     let todos: Vec<TodoItem> =
         serde_json::from_value(todos_value).context("Invalid 'todos' argument")?;
@@ -42,14 +40,11 @@ pub(super) fn execute_create_todo_list(args: &Value) -> Result<ToolResult> {
         }
     }
 
-    let mut store = todo_items()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Todo list storage is unavailable"))?;
-    *store = todos;
-    Ok(ToolResult::ok(format_todo_list(&store)))
+    store.items = todos;
+    Ok(ToolResult::ok(format_todo_list(&store.items)))
 }
 
-pub(super) fn execute_update_todo_list(args: &Value) -> Result<ToolResult> {
+pub(super) fn execute_update_todo_list(args: &Value, store: &mut TodoStore) -> Result<ToolResult> {
     let updates_value = args
         .get("updates")
         .cloned()
@@ -57,11 +52,8 @@ pub(super) fn execute_update_todo_list(args: &Value) -> Result<ToolResult> {
     let updates: Vec<TodoUpdate> =
         serde_json::from_value(updates_value).context("Invalid 'updates' argument")?;
 
-    let mut store = todo_items()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Todo list storage is unavailable"))?;
     for update in updates {
-        let Some(todo) = store.iter_mut().find(|item| item.id == update.id) else {
+        let Some(todo) = store.items.iter_mut().find(|item| item.id == update.id) else {
             return Ok(ToolResult::err(format!(
                 "Todo with id '{}' not found",
                 update.id
@@ -89,7 +81,7 @@ pub(super) fn execute_update_todo_list(args: &Value) -> Result<ToolResult> {
         }
     }
 
-    Ok(ToolResult::ok(format_todo_list(&store)))
+    Ok(ToolResult::ok(format_todo_list(&store.items)))
 }
 
 fn is_valid_todo_item(item: &TodoItem) -> bool {

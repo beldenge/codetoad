@@ -15,7 +15,7 @@ use crate::inline_prompt::{read_prompt_line, select_model_inline};
 use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
-use crate::tools::{ToolResult, execute_bash_command};
+use crate::tools::ToolResult;
 use anyhow::Result;
 use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -218,7 +218,7 @@ async fn handle_direct_command(
         }
     }
 
-    let result = execute_bash_command(input).await?;
+    let result = agent.lock().await.execute_bash_command(input).await?;
     print_tool_result(tool_call, result);
     Ok(())
 }

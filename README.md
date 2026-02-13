@@ -43,6 +43,7 @@ Implemented now:
 - Tool-calling agent loop with max tool rounds
 - Agent runtime now targets a provider trait boundary (`ModelClient`) to support fake/in-process clients in tests and future multi-provider backends
 - Tool implementations are split by domain (`file_ops`, `bash_tool`, `search_tool`, `todos`) for cleaner extension paths
+- Tool path/cwd state and todo state are session-scoped in the agent runtime (global statics removed)
 - Responses API request/response conversion:
   - Converts chat-style message history to Responses `input` items
   - Flattens tool schema format for Responses API

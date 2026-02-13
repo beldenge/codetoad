@@ -1,21 +1,24 @@
 use super::ToolResult;
-use crate::tool_context;
+use crate::tool_context::ToolContext;
 use anyhow::{Context, Result};
 use serde_json::Value;
 use tokio::process::Command;
 
-pub(super) async fn execute_bash_tool(args: &Value) -> Result<ToolResult> {
+pub(super) async fn execute_bash_tool(
+    args: &Value,
+    tool_context: &mut ToolContext,
+) -> Result<ToolResult> {
     let command = args
         .get("command")
         .and_then(Value::as_str)
         .context("Missing 'command' argument")?;
-    execute_bash_command(command).await
+    execute_bash_command(command, tool_context).await
 }
 
-pub async fn execute_bash_command(command: &str) -> Result<ToolResult> {
+pub async fn execute_bash_command(command: &str, tool_context: &mut ToolContext) -> Result<ToolResult> {
     let trimmed = command.trim();
     if let Some(path) = trimmed.strip_prefix("cd ").map(str::trim) {
-        return match tool_context::set_current_dir(path) {
+        return match tool_context.set_current_dir(path) {
             Ok(new_dir) => Ok(ToolResult::ok(format!(
                 "Changed directory to: {}",
                 new_dir.display()
@@ -24,10 +27,7 @@ pub async fn execute_bash_command(command: &str) -> Result<ToolResult> {
         };
     }
 
-    let cwd = match tool_context::current_dir() {
-        Ok(cwd) => cwd,
-        Err(err) => return Ok(ToolResult::err(err.to_string())),
-    };
+    let cwd = tool_context.current_dir().to_path_buf();
     let output = if cfg!(windows) {
         match Command::new("powershell")
             .arg("-NoProfile")

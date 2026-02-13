@@ -1,72 +1,45 @@
 use anyhow::{Context, Result, bail};
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone)]
-struct ToolContextState {
+pub struct ToolContext {
     project_root: PathBuf,
     current_dir: PathBuf,
 }
 
-static TOOL_CONTEXT: OnceLock<Mutex<ToolContextState>> = OnceLock::new();
+impl ToolContext {
+    pub fn new(project_root: PathBuf) -> Result<Self> {
+        let normalized_root = normalize_existing_dir(&project_root).with_context(|| {
+            format!(
+                "Failed to initialize tool context for {}",
+                project_root.display()
+            )
+        })?;
 
-fn context_mutex() -> &'static Mutex<ToolContextState> {
-    TOOL_CONTEXT.get_or_init(|| {
-        Mutex::new(ToolContextState {
-            project_root: PathBuf::new(),
-            current_dir: PathBuf::new(),
+        Ok(Self {
+            project_root: normalized_root.clone(),
+            current_dir: normalized_root,
         })
-    })
-}
-
-pub fn initialize(project_root: PathBuf) -> Result<()> {
-    let normalized_root = normalize_existing_dir(&project_root)
-        .with_context(|| format!("Failed to initialize tool context for {}", project_root.display()))?;
-    let mut guard = context_mutex()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Tool context lock poisoned"))?;
-    guard.project_root = normalized_root.clone();
-    guard.current_dir = normalized_root;
-    Ok(())
-}
-
-pub fn current_dir() -> Result<PathBuf> {
-    let guard = context_mutex()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Tool context lock poisoned"))?;
-    if guard.current_dir.as_os_str().is_empty() {
-        bail!("Tool context not initialized");
-    }
-    Ok(guard.current_dir.clone())
-}
-
-pub fn set_current_dir(path: &str) -> Result<PathBuf> {
-    let mut guard = context_mutex()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Tool context lock poisoned"))?;
-    if guard.current_dir.as_os_str().is_empty() {
-        bail!("Tool context not initialized");
     }
 
-    let normalized = resolve_and_validate_locked(&guard, path)
-        .with_context(|| format!("Failed to change directory to '{path}'"))?;
-    if !normalized.is_dir() {
-        bail!("Not a directory: {}", normalized.display());
-    }
-    guard.current_dir = normalized.clone();
-    Ok(normalized)
-}
-
-pub fn resolve_path(path: &str) -> Result<PathBuf> {
-    let guard = context_mutex()
-        .lock()
-        .map_err(|_| anyhow::anyhow!("Tool context lock poisoned"))?;
-    if guard.current_dir.as_os_str().is_empty() {
-        bail!("Tool context not initialized");
+    pub fn current_dir(&self) -> &Path {
+        &self.current_dir
     }
 
-    resolve_and_validate_locked(&guard, path)
+    pub fn set_current_dir(&mut self, path: &str) -> Result<PathBuf> {
+        let normalized = resolve_and_validate(self, path)
+            .with_context(|| format!("Failed to change directory to '{path}'"))?;
+        if !normalized.is_dir() {
+            bail!("Not a directory: {}", normalized.display());
+        }
+        self.current_dir = normalized.clone();
+        Ok(normalized)
+    }
+
+    pub fn resolve_path(&self, path: &str) -> Result<PathBuf> {
+        resolve_and_validate(self, path)
+    }
 }
 
 fn normalize_existing_dir(path: &Path) -> Result<PathBuf> {
@@ -78,16 +51,16 @@ fn normalize_existing_dir(path: &Path) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-fn resolve_and_validate_locked(state: &ToolContextState, raw_path: &str) -> Result<PathBuf> {
+fn resolve_and_validate(context: &ToolContext, raw_path: &str) -> Result<PathBuf> {
     let candidate = if Path::new(raw_path).is_absolute() {
         PathBuf::from(raw_path)
     } else {
-        state.current_dir.join(raw_path)
+        context.current_dir.join(raw_path)
     };
     let normalized = lexical_normalize(&candidate);
     let resolved = resolve_with_existing_ancestor(&normalized)?;
 
-    ensure_inside_project(&resolved, &state.project_root)?;
+    ensure_inside_project(&resolved, &context.project_root)?;
     Ok(resolved)
 }
 
@@ -153,7 +126,7 @@ fn ensure_inside_project(path: &Path, project_root: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolContextState, lexical_normalize, resolve_and_validate_locked};
+    use super::{ToolContext, lexical_normalize};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -168,13 +141,11 @@ mod tests {
     fn resolve_and_validate_allows_in_project_paths() {
         let temp = TempDir::new("tool-context-allow");
         let root = fs::canonicalize(temp.path()).expect("canonical root");
-        let state = ToolContextState {
-            project_root: root.clone(),
-            current_dir: root.clone(),
-        };
+        let context = ToolContext::new(root.clone()).expect("tool context");
 
-        let resolved =
-            resolve_and_validate_locked(&state, "nested/new-file.txt").expect("path should resolve");
+        let resolved = context
+            .resolve_path("nested/new-file.txt")
+            .expect("path should resolve");
         assert_eq!(resolved, root.join("nested").join("new-file.txt"));
     }
 
@@ -182,12 +153,11 @@ mod tests {
     fn resolve_and_validate_rejects_escape_paths() {
         let temp = TempDir::new("tool-context-reject");
         let root = fs::canonicalize(temp.path()).expect("canonical root");
-        let state = ToolContextState {
-            project_root: root.clone(),
-            current_dir: root,
-        };
+        let context = ToolContext::new(root).expect("tool context");
 
-        let err = resolve_and_validate_locked(&state, "../outside.txt").expect_err("must reject");
+        let err = context
+            .resolve_path("../outside.txt")
+            .expect_err("must reject");
         assert!(err.to_string().contains("Path escapes project root"));
     }
 

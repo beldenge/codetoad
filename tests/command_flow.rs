@@ -116,7 +116,8 @@ async fn streaming_flow_emits_confirmation_then_rejection_result_then_done() {
         }],
     }];
 
-    let cwd = TempDir::new("agent-flow").path().to_path_buf();
+    let temp = TempDir::new("agent-flow");
+    let cwd = temp.path().to_path_buf();
     let fake = FakeClient::with_rounds(vec![first_round, second_round]);
     let mut agent = Agent::with_client(fake, 4, &cwd).expect("agent setup");
 
