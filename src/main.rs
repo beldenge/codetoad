@@ -7,6 +7,7 @@ mod grok_client;
 mod inline_ui;
 mod protocol;
 mod settings;
+mod slash_commands;
 mod tool_catalog;
 mod tool_context;
 mod tools;

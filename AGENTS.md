@@ -23,6 +23,8 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - inline interactive mode (default), headless prompt mode, and git subcommand routing
 - `src/cli.rs`
   - clap argument/subcommand definitions
+- `src/slash_commands.rs`
+  - canonical slash-command metadata, parsing, and suggestion/help helpers
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
 - `src/custom_instructions.rs`

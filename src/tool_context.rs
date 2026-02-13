@@ -153,12 +153,68 @@ fn ensure_inside_project(path: &Path, project_root: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::lexical_normalize;
-    use std::path::Path;
+    use super::{ToolContextState, lexical_normalize, resolve_and_validate_locked};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn lexical_normalize_collapses_parent_segments() {
         let normalized = lexical_normalize(Path::new("a/b/../c/./file.txt"));
         assert_eq!(normalized, Path::new("a/c/file.txt"));
+    }
+
+    #[test]
+    fn resolve_and_validate_allows_in_project_paths() {
+        let temp = TempDir::new("tool-context-allow");
+        let root = fs::canonicalize(temp.path()).expect("canonical root");
+        let state = ToolContextState {
+            project_root: root.clone(),
+            current_dir: root.clone(),
+        };
+
+        let resolved =
+            resolve_and_validate_locked(&state, "nested/new-file.txt").expect("path should resolve");
+        assert_eq!(resolved, root.join("nested").join("new-file.txt"));
+    }
+
+    #[test]
+    fn resolve_and_validate_rejects_escape_paths() {
+        let temp = TempDir::new("tool-context-reject");
+        let root = fs::canonicalize(temp.path()).expect("canonical root");
+        let state = ToolContextState {
+            project_root: root.clone(),
+            current_dir: root,
+        };
+
+        let err = resolve_and_validate_locked(&state, "../outside.txt").expect_err("must reject");
+        assert!(err.to_string().contains("Path escapes project root"));
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }

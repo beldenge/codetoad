@@ -4,6 +4,10 @@ use crate::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushStep,
     run_commit_and_push as run_commit_and_push_flow,
 };
+use crate::slash_commands::{
+    CommandGroup, ParsedSlashCommand, append_help_section, filtered_command_suggestions,
+    parse_slash_command,
+};
 use crate::settings::SettingsManager;
 use crate::tool_catalog::tool_display_name;
 use crate::tools::{ToolResult, execute_bash_command};
@@ -24,71 +28,8 @@ use tokio_util::sync::CancellationToken;
 const DIRECT_COMMANDS: &[&str] = &[
     "ls", "pwd", "cd", "cat", "mkdir", "touch", "echo", "grep", "find", "cp", "mv", "rm",
 ];
-const SLASH_COMMANDS: &[SlashCommand] = &[
-    SlashCommand::new(
-        "/help",
-        "Show help information",
-        CommandGroup::BuiltIn,
-        true,
-    ),
-    SlashCommand::new(
-        "/clear",
-        "Clear chat history",
-        CommandGroup::BuiltIn,
-        true,
-    ),
-    SlashCommand::new(
-        "/models",
-        "Switch between available models",
-        CommandGroup::BuiltIn,
-        true,
-    ),
-    SlashCommand::new(
-        "/models <name>",
-        "Set model directly",
-        CommandGroup::BuiltIn,
-        false,
-    ),
-    SlashCommand::new("/exit", "Exit application", CommandGroup::BuiltIn, true),
-    SlashCommand::new(
-        "/commit-and-push",
-        "AI-generated commit and push",
-        CommandGroup::Git,
-        true,
-    ),
-];
 const STATUS_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const STREAM_FLUSH_THRESHOLD: usize = 16;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CommandGroup {
-    BuiltIn,
-    Git,
-}
-
-#[derive(Clone, Copy)]
-struct SlashCommand {
-    command: &'static str,
-    description: &'static str,
-    group: CommandGroup,
-    show_in_suggestions: bool,
-}
-
-impl SlashCommand {
-    const fn new(
-        command: &'static str,
-        description: &'static str,
-        group: CommandGroup,
-        show_in_suggestions: bool,
-    ) -> Self {
-        Self {
-            command,
-            description,
-            group,
-            show_in_suggestions,
-        }
-    }
-}
 
 #[derive(Default)]
 struct MarkdownStreamRenderer {
@@ -182,49 +123,46 @@ async fn handle_input(
     agent: Arc<Mutex<Agent>>,
     settings: Arc<Mutex<SettingsManager>>,
 ) -> Result<()> {
-    if input == "/help" {
-        println!("{}", help_text());
-        return Ok(());
-    }
-
-    if input == "/clear" {
-        agent.lock().await.reset_conversation();
-        clear_screen();
-        print_logo_and_tips();
-        return Ok(());
-    }
-
-    if input == "/models" {
-        let available = settings.lock().await.get_available_models();
-        let current = agent.lock().await.current_model().to_string();
-        match select_model_inline(&available, &current)? {
-            Some(model) => {
-                agent.lock().await.set_model(model.clone());
-                settings.lock().await.update_project_model(&model)?;
-                println!("Switched to model: {model}");
+    if let Some(command) = parse_slash_command(input) {
+        match command {
+            ParsedSlashCommand::Help => {
+                println!("{}", help_text());
             }
-            None => {
-                println!("Model selection cancelled.");
+            ParsedSlashCommand::Clear => {
+                agent.lock().await.reset_conversation();
+                clear_screen();
+                print_logo_and_tips();
             }
+            ParsedSlashCommand::Models => {
+                let available = settings.lock().await.get_available_models();
+                let current = agent.lock().await.current_model().to_string();
+                match select_model_inline(&available, &current)? {
+                    Some(model) => {
+                        agent.lock().await.set_model(model.clone());
+                        settings.lock().await.update_project_model(&model)?;
+                        println!("Switched to model: {model}");
+                    }
+                    None => {
+                        println!("Model selection cancelled.");
+                    }
+                }
+            }
+            ParsedSlashCommand::SetModel(model) => {
+                let available = settings.lock().await.get_available_models();
+                if available.iter().any(|m| m == &model) {
+                    agent.lock().await.set_model(model.clone());
+                    settings.lock().await.update_project_model(&model)?;
+                    println!("Switched to model: {model}");
+                } else {
+                    println!("Invalid model: {model}");
+                    println!("Available: {}", available.join(", "));
+                }
+            }
+            ParsedSlashCommand::CommitAndPush => {
+                run_commit_and_push(agent).await?;
+            }
+            ParsedSlashCommand::Exit => {}
         }
-        return Ok(());
-    }
-
-    if let Some(model) = input.strip_prefix("/models ").map(str::trim) {
-        let available = settings.lock().await.get_available_models();
-        if available.iter().any(|m| m == model) {
-            agent.lock().await.set_model(model.to_string());
-            settings.lock().await.update_project_model(model)?;
-            println!("Switched to model: {model}");
-        } else {
-            println!("Invalid model: {model}");
-            println!("Available: {}", available.join(", "));
-        }
-        return Ok(());
-    }
-
-    if input == "/commit-and-push" {
-        run_commit_and_push(agent).await?;
         return Ok(());
     }
 
@@ -708,17 +646,6 @@ Active Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool 
 Inline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C.",
     );
     output
-}
-
-fn append_help_section(output: &mut String, title: &str, group: CommandGroup) {
-    output.push_str(title);
-    output.push_str(":\n");
-    for command in SLASH_COMMANDS.iter().filter(|entry| entry.group == group) {
-        output.push_str(&format!(
-            "  {:<18} {}\n",
-            command.command, command.description
-        ));
-    }
 }
 
 fn clear_screen() {
@@ -1554,19 +1481,6 @@ fn previous_word_start(input: &str, cursor: usize) -> usize {
     }
 
     index
-}
-
-fn filtered_command_suggestions(input: &str) -> Vec<&'static SlashCommand> {
-    if !input.starts_with('/') {
-        return Vec::new();
-    }
-
-    let prefix = input.trim();
-    SLASH_COMMANDS
-        .iter()
-        .filter(|entry| entry.show_in_suggestions)
-        .filter(|entry| entry.command.starts_with(prefix))
-        .collect()
 }
 
 fn build_prompt_panel(
