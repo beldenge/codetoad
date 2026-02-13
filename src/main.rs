@@ -17,7 +17,6 @@ use crossterm::event::DisableMouseCapture;
 use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
 use std::io;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -184,13 +183,4 @@ async fn headless_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
 
 fn first_line(text: String) -> String {
     text.lines().next().unwrap_or_default().to_string()
-}
-
-#[allow(dead_code)]
-fn _cwd_from_arg(directory: Option<PathBuf>) -> Result<PathBuf> {
-    if let Some(directory) = directory {
-        Ok(directory)
-    } else {
-        std::env::current_dir().context("Failed to determine current directory")
-    }
 }

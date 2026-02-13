@@ -1,7 +1,7 @@
 use crate::custom_instructions::load_custom_instructions;
 use crate::grok_client::{GrokClient, SearchMode};
 use crate::protocol::{
-    ChatCompletionMessage, ChatCompletionToolCallDelta, ChatMessage, ChatTool, ChatToolCall,
+    ChatCompletionToolCallDelta, ChatMessage, ChatTool, ChatToolCall,
     ChatToolCallFunction, ChatToolFunction,
 };
 use crate::tools::{ToolResult, execute_tool};
@@ -831,15 +831,5 @@ fn estimate_chars_tokens(char_count: usize) -> usize {
     } else {
         // Rough token approximation for streaming UX feedback.
         char_count.div_ceil(4)
-    }
-}
-
-#[allow(dead_code)]
-fn _assistant_to_message(message: ChatCompletionMessage) -> ChatMessage {
-    ChatMessage {
-        role: "assistant".to_string(),
-        content: message.content,
-        tool_calls: message.tool_calls,
-        tool_call_id: None,
     }
 }
