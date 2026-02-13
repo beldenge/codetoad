@@ -24,8 +24,9 @@ Implemented now:
 - Inline mode shows a `thinking...` status when waiting for first streamed tokens
 - Inline mode shows a live spinner + elapsed seconds during thinking/tool execution and a completion duration summary
 - Inline prompt supports rich key controls (history, cursor movement, word/line deletion)
-- Inline prompt supports slash-command completion with `Tab`
-- Inline prompt shows live slash-command suggestions while typing `/...`
+- Inline prompt supports slash-command suggestions with descriptions while typing `/...`
+- `Up/Down` navigates command suggestions and `Tab/Enter` accepts the selected command
+- `/models` opens an interactive model picker (arrow keys + Enter/Tab)
 - Inline assistant output applies markdown-aware rendering (headings, lists, inline code, fenced code blocks) with lightweight syntax coloring
 - Inline tool execution shows lifecycle timeline entries with per-tool durations and end-of-response tool summary
 - Ctrl+C in prompt clears input first; pressing Ctrl+C again on empty input exits

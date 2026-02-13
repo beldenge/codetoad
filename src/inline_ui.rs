@@ -18,12 +18,12 @@ use tokio_util::sync::CancellationToken;
 const DIRECT_COMMANDS: &[&str] = &[
     "ls", "pwd", "cd", "cat", "mkdir", "touch", "echo", "grep", "find", "cp", "mv", "rm",
 ];
-const SLASH_COMMANDS: &[&str] = &[
-    "/help",
-    "/clear",
-    "/models",
-    "/commit-and-push",
-    "/exit",
+const COMMAND_SUGGESTIONS: &[(&str, &str)] = &[
+    ("/help", "Show help information"),
+    ("/clear", "Clear chat history"),
+    ("/models", "Switch Grok model"),
+    ("/commit-and-push", "AI commit and push"),
+    ("/exit", "Exit application"),
 ];
 const STATUS_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const STREAM_FLUSH_THRESHOLD: usize = 16;
@@ -94,40 +94,15 @@ async fn handle_input(
     if input == "/models" {
         let available = settings.lock().await.get_available_models();
         let current = agent.lock().await.current_model().to_string();
-        println!("Available models (choose number, model name, or blank to cancel):");
-        for (idx, model) in available.iter().enumerate() {
-            if model == &current {
-                println!("{}. {} (current)", idx + 1, model);
-            } else {
-                println!("{}. {}", idx + 1, model);
+        match select_model_inline(&available, &current)? {
+            Some(model) => {
+                agent.lock().await.set_model(model.clone());
+                settings.lock().await.update_project_model(&model)?;
+                println!("Switched to model: {model}");
             }
-        }
-        print!("model> ");
-        io::stdout().flush()?;
-        let mut selected = String::new();
-        io::stdin().read_line(&mut selected)?;
-        let selected = selected.trim();
-        if selected.is_empty() {
-            println!("Model selection cancelled.");
-            return Ok(());
-        }
-        let candidate = if let Ok(index) = selected.parse::<usize>() {
-            if index == 0 || index > available.len() {
-                println!("Invalid model selection index: {selected}");
-                return Ok(());
+            None => {
+                println!("Model selection cancelled.");
             }
-            available[index - 1].clone()
-        } else {
-            selected.to_string()
-        };
-
-        if available.iter().any(|m| m == &candidate) {
-            agent.lock().await.set_model(candidate.clone());
-            settings.lock().await.update_project_model(&candidate)?;
-            println!("Switched to model: {candidate}");
-        } else {
-            println!("Invalid model: {candidate}");
-            println!("Available: {}", available.join(", "));
         }
         return Ok(());
     }
@@ -147,12 +122,6 @@ async fn handle_input(
 
     if input == "/commit-and-push" {
         run_commit_and_push(agent).await?;
-        return Ok(());
-    }
-
-    if input.starts_with('/') {
-        println!("Unknown slash command: {input}");
-        println!("Use /help to see available commands.");
         return Ok(());
     }
 
@@ -520,7 +489,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\n/clear\n/help\n/models\n/models <name>\n/commit-and-push\n/exit\n\nInput controls:\n  Up/Down       History\n  Left/Right    Move cursor\n  Tab           Slash-command completion (cycles matches)\n  /...          Live command suggestion row\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
@@ -890,15 +859,12 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
     let mut cursor = 0usize;
     let mut history_idx: Option<usize> = None;
     let mut ctrl_c_armed = false;
-    let mut completion_prefix = String::new();
-    let mut completion_matches: Vec<&'static str> = Vec::new();
-    let mut completion_index = 0usize;
+    let mut selected_suggestion_idx = 0usize;
     let mut suggestions_visible = false;
     render_prompt_with_suggestions(
         &input,
         cursor,
-        build_command_hint(&input, &completion_prefix, &completion_matches, completion_index)
-            .as_deref(),
+        build_command_hint(&input, selected_suggestion_idx).as_deref(),
         &mut suggestions_visible,
     )?;
 
@@ -913,6 +879,23 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
 
         match key.code {
             KeyCode::Enter => {
+                let suggestions = filtered_command_suggestions(&input);
+                if !suggestions.is_empty() {
+                    let safe = selected_suggestion_idx.min(suggestions.len().saturating_sub(1));
+                    input = format!("{} ", suggestions[safe].0);
+                    cursor = input.len();
+                    ctrl_c_armed = false;
+                    history_idx = None;
+                    selected_suggestion_idx = 0;
+                    let hint = build_command_hint(&input, selected_suggestion_idx);
+                    render_prompt_with_suggestions(
+                        &input,
+                        cursor,
+                        hint.as_deref(),
+                        &mut suggestions_visible,
+                    )?;
+                    continue;
+                }
                 clear_suggestion_line(&mut suggestions_visible)?;
                 disable_raw_mode()?;
                 print!("\r\n");
@@ -935,7 +918,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     cursor = 0;
                     history_idx = None;
                     ctrl_c_armed = false;
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
             }
             KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -950,7 +933,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     let next = next_boundary(&input, cursor);
                     input.drain(cursor..next);
                     ctrl_c_armed = false;
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
             }
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -966,7 +949,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                 cursor = 0;
                 history_idx = None;
                 ctrl_c_armed = false;
-                reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                selected_suggestion_idx = 0;
             }
             KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let start = previous_word_start(&input, cursor);
@@ -974,7 +957,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                 cursor = start;
                 history_idx = None;
                 ctrl_c_armed = false;
-                reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                selected_suggestion_idx = 0;
             }
             KeyCode::Left => {
                 cursor = prev_boundary(&input, cursor);
@@ -998,7 +981,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     input.drain(prev..cursor);
                     cursor = prev;
                     history_idx = None;
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
                 ctrl_c_armed = false;
             }
@@ -1007,24 +990,34 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     let next = next_boundary(&input, cursor);
                     input.drain(cursor..next);
                     history_idx = None;
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
                 ctrl_c_armed = false;
             }
             KeyCode::Up => {
-                if !history.is_empty() {
+                let suggestions = filtered_command_suggestions(&input);
+                if !suggestions.is_empty() {
+                    selected_suggestion_idx = if selected_suggestion_idx == 0 {
+                        suggestions.len().saturating_sub(1)
+                    } else {
+                        selected_suggestion_idx.saturating_sub(1)
+                    };
+                } else if !history.is_empty() {
                     let next = history_idx
                         .map(|idx| idx.saturating_sub(1))
                         .unwrap_or_else(|| history.len().saturating_sub(1));
                     history_idx = Some(next);
                     input = history[next].clone();
                     cursor = input.len();
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
                 ctrl_c_armed = false;
             }
             KeyCode::Down => {
-                if !history.is_empty() {
+                let suggestions = filtered_command_suggestions(&input);
+                if !suggestions.is_empty() {
+                    selected_suggestion_idx = (selected_suggestion_idx + 1) % suggestions.len();
+                } else if !history.is_empty() {
                     match history_idx {
                         None => {}
                         Some(idx) if idx + 1 >= history.len() => {
@@ -1039,25 +1032,18 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                             cursor = input.len();
                         }
                     }
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
                 ctrl_c_armed = false;
             }
             KeyCode::Tab => {
-                if input.starts_with('/') {
-                    let prefix = input.trim();
-                    if completion_matches.is_empty() || completion_prefix != prefix {
-                        completion_matches = slash_matches(prefix);
-                        completion_index = 0;
-                        completion_prefix = prefix.to_string();
-                    } else if !completion_matches.is_empty() {
-                        completion_index = (completion_index + 1) % completion_matches.len();
-                    }
-
-                    if let Some(selected) = completion_matches.get(completion_index) {
-                        input = format!("{selected} ");
-                        cursor = input.len();
-                    }
+                let suggestions = filtered_command_suggestions(&input);
+                if !suggestions.is_empty() {
+                    let safe = selected_suggestion_idx.min(suggestions.len().saturating_sub(1));
+                    input = format!("{} ", suggestions[safe].0);
+                    cursor = input.len();
+                    history_idx = None;
+                    selected_suggestion_idx = 0;
                 }
                 ctrl_c_armed = false;
             }
@@ -1069,7 +1055,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
                     cursor += ch.len_utf8();
                     history_idx = None;
                     ctrl_c_armed = false;
-                    reset_completion(&mut completion_prefix, &mut completion_matches, &mut completion_index);
+                    selected_suggestion_idx = 0;
                 }
             }
             _ => {
@@ -1077,12 +1063,7 @@ fn read_prompt_line(history: &[String]) -> Result<Option<String>> {
             }
         }
 
-        let hint = build_command_hint(
-            &input,
-            &completion_prefix,
-            &completion_matches,
-            completion_index,
-        );
+        let hint = build_command_hint(&input, selected_suggestion_idx);
         render_prompt_with_suggestions(
             &input,
             cursor,
@@ -1125,6 +1106,73 @@ fn clear_suggestion_line(suggestions_visible: &mut bool) -> io::Result<()> {
         *suggestions_visible = false;
     }
     Ok(())
+}
+
+fn select_model_inline(available: &[String], current: &str) -> Result<Option<String>> {
+    if available.is_empty() {
+        println!("No models available.");
+        return Ok(None);
+    }
+
+    let mut selected = available.iter().position(|m| m == current).unwrap_or(0);
+    enable_raw_mode()?;
+    let mut rendered_lines = 0usize;
+
+    loop {
+        if rendered_lines > 0 {
+            execute!(io::stdout(), MoveUp(rendered_lines as u16), MoveToColumn(0))?;
+            for _ in 0..rendered_lines {
+                execute!(io::stdout(), Clear(ClearType::CurrentLine), MoveDown(1), MoveToColumn(0))?;
+            }
+            execute!(io::stdout(), MoveUp(rendered_lines as u16), MoveToColumn(0))?;
+        }
+
+        println!("Select model (↑/↓ navigate, Enter/Tab confirm, Esc cancel):");
+        for (idx, model) in available.iter().enumerate() {
+            let marker = if idx == selected { ">" } else { " " };
+            let current_suffix = if model == current { " (current)" } else { "" };
+            println!("{marker} {model}{current_suffix}");
+        }
+        io::stdout().flush()?;
+        rendered_lines = available.len() + 1;
+
+        let event = event::read()?;
+        let CEvent::Key(key) = event else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+
+        match key.code {
+            KeyCode::Up => {
+                selected = if selected == 0 {
+                    available.len().saturating_sub(1)
+                } else {
+                    selected.saturating_sub(1)
+                };
+            }
+            KeyCode::Down => {
+                selected = (selected + 1) % available.len();
+            }
+            KeyCode::Enter | KeyCode::Tab => {
+                disable_raw_mode()?;
+                execute!(io::stdout(), MoveToColumn(0))?;
+                return Ok(Some(available[selected].clone()));
+            }
+            KeyCode::Esc => {
+                disable_raw_mode()?;
+                execute!(io::stdout(), MoveToColumn(0))?;
+                return Ok(None);
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                disable_raw_mode()?;
+                execute!(io::stdout(), MoveToColumn(0))?;
+                return Ok(None);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn prev_boundary(input: &str, cursor: usize) -> usize {
@@ -1186,39 +1234,33 @@ fn previous_word_start(input: &str, cursor: usize) -> usize {
     index
 }
 
-fn slash_matches(prefix: &str) -> Vec<&'static str> {
-    SLASH_COMMANDS
+fn filtered_command_suggestions(input: &str) -> Vec<(&'static str, &'static str)> {
+    if !input.starts_with('/') {
+        return Vec::new();
+    }
+
+    let prefix = input.trim();
+    COMMAND_SUGGESTIONS
         .iter()
         .copied()
-        .filter(|cmd| cmd.starts_with(prefix))
+        .filter(|(cmd, _)| cmd.starts_with(prefix))
         .collect()
 }
 
-fn build_command_hint(
-    input: &str,
-    completion_prefix: &str,
-    completion_matches: &[&'static str],
-    completion_index: usize,
-) -> Option<String> {
+fn build_command_hint(input: &str, selected_index: usize) -> Option<String> {
     if !input.starts_with('/') {
         return None;
     }
 
-    let prefix = input.trim();
-    let matches = slash_matches(prefix);
+    let matches = filtered_command_suggestions(input);
     if matches.is_empty() {
         return Some("commands: (no matches)".to_string());
     }
 
-    let active_index = if completion_prefix == prefix && !completion_matches.is_empty() {
-        Some(completion_index % completion_matches.len())
-    } else {
-        None
-    };
-
+    let safe = selected_index.min(matches.len().saturating_sub(1));
     let mut parts = Vec::new();
-    for (idx, cmd) in matches.iter().take(5).enumerate() {
-        let rendered = if active_index == Some(idx) {
+    for (idx, (cmd, _)) in matches.iter().take(5).enumerate() {
+        let rendered = if idx == safe {
             format!("[{cmd}]")
         } else {
             (*cmd).to_string()
@@ -1229,15 +1271,10 @@ fn build_command_hint(
         parts.push("...".to_string());
     }
 
-    Some(format!("commands: {}", parts.join("  ")))
-}
-
-fn reset_completion(
-    prefix: &mut String,
-    matches: &mut Vec<&'static str>,
-    index: &mut usize,
-) {
-    prefix.clear();
-    matches.clear();
-    *index = 0;
+    Some(format!(
+        "commands: {}    selected: {} - {}",
+        parts.join("  "),
+        matches[safe].0,
+        matches[safe].1
+    ))
 }
