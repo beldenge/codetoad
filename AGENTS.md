@@ -25,6 +25,10 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - clap argument/subcommand definitions
 - `src/slash_commands.rs`
   - canonical slash-command metadata, parsing, and suggestion/help helpers
+- `src/inline_prompt.rs`
+  - prompt input editor, key handling, slash suggestion panel, and model picker UI
+- `src/inline_markdown.rs`
+  - markdown-aware streaming renderer and lightweight code syntax highlighting
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
 - `src/custom_instructions.rs`
@@ -55,10 +59,8 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - `view_file`, `create_file`, `str_replace_editor`, `bash`, `search`
   - `create_todo_list`, `update_todo_list`
 - `src/inline_ui.rs`
-  - scrollback-native inline interaction loop
+  - scrollback-native inline interaction loop orchestration
   - primary parity mode for terminal history behavior
-  - vertical slash-command suggestion panel under prompt
-  - markdown-aware streaming renderer with lightweight syntax coloring
   - tool lifecycle timeline (start/result + durations + response summary)
   - active generation cancellation via `Esc`/`Ctrl+C`
   - live status telemetry with approximate token counts and auto-edit mode indicator
