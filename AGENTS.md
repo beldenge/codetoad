@@ -11,6 +11,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 
 - After finishing a set of changes, run:
   - `cargo clippy --all-targets --all-features -- -D warnings`
+- Prefer latest crate releases for dependencies; when changing dependencies, update to the newest compatible versions and refresh `Cargo.lock` (for example via `cargo update`) before running quality gates.
 - Never use `#[allow(...)]` attributes to bypass clippy warnings; fix the underlying issue instead.
 - Keep `README.md` up to date with real, current behavior.
 - Keep this `AGENTS.md` up to date with real agent-facing guidance.
