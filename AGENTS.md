@@ -42,6 +42,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - primary parity mode for terminal history behavior
   - markdown-aware streaming renderer with lightweight syntax coloring
   - tool lifecycle timeline (start/result + durations + response summary)
+  - active generation cancellation via `Esc`/`Ctrl+C`
 
 ## UI Direction
 

@@ -36,6 +36,21 @@ struct MarkdownStreamRenderer {
     code_lang: String,
 }
 
+struct StreamRawModeGuard;
+
+impl StreamRawModeGuard {
+    fn new() -> Result<Self> {
+        enable_raw_mode()?;
+        Ok(Self)
+    }
+}
+
+impl Drop for StreamRawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+    }
+}
+
 pub async fn run_inline(
     agent: Arc<Mutex<Agent>>,
     settings: Arc<Mutex<SettingsManager>>,
@@ -142,16 +157,18 @@ async fn handle_input(
 }
 
 async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Result<()> {
+    let _raw_guard = StreamRawModeGuard::new()?;
     let cancel_token = CancellationToken::new();
     let (agent_tx, mut agent_rx) = mpsc::unbounded_channel::<AgentEvent>();
 
     let error_tx = agent_tx.clone();
+    let task_cancel_token = cancel_token.clone();
     let agent_for_task = agent.clone();
     tokio::spawn(async move {
         let result = agent_for_task
             .lock()
             .await
-            .process_user_message_stream(message, cancel_token, agent_tx)
+            .process_user_message_stream(message, task_cancel_token, agent_tx)
             .await;
         if let Err(err) = result {
             error_tx
@@ -173,29 +190,38 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
     let mut tool_started_at: HashMap<String, Instant> = HashMap::new();
     let mut tool_succeeded = 0usize;
     let mut tool_failed = 0usize;
+    let mut cancel_requested = false;
 
     loop {
         let event = tokio::select! {
-            _ = status_tick.tick(), if !started_content => {
-                let elapsed = started_at.elapsed().as_secs();
-                let progress = if phase == "running tools" && tool_calls_seen > 0 {
-                    format!(
-                        " ({}/{})",
-                        tool_results_seen.min(tool_calls_seen),
-                        tool_calls_seen
-                    )
-                } else {
-                    String::new()
-                };
-                let status = format!(
-                    "{} {}{}... {}s",
-                    STATUS_FRAMES[frame_idx % STATUS_FRAMES.len()],
-                    phase,
-                    progress,
-                    elapsed
-                );
-                frame_idx = frame_idx.wrapping_add(1);
-                render_status_line(&status, &mut status_width)?;
+            _ = status_tick.tick() => {
+                if !cancel_requested && poll_cancel_request()? {
+                    cancel_requested = true;
+                    phase = "cancelling";
+                    cancel_token.cancel();
+                }
+
+                if !started_content {
+                    let elapsed = started_at.elapsed().as_secs();
+                    let progress = if phase == "running tools" && tool_calls_seen > 0 {
+                        format!(
+                            " ({}/{})",
+                            tool_results_seen.min(tool_calls_seen),
+                            tool_calls_seen
+                        )
+                    } else {
+                        String::new()
+                    };
+                    let status = format!(
+                        "{} {}{}... {}s",
+                        STATUS_FRAMES[frame_idx % STATUS_FRAMES.len()],
+                        phase,
+                        progress,
+                        elapsed
+                    );
+                    frame_idx = frame_idx.wrapping_add(1);
+                    render_status_line(&status, &mut status_width)?;
+                }
                 continue;
             }
             maybe_event = agent_rx.recv() => maybe_event,
@@ -489,7 +515,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> &'static str {
-    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
+    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nActive Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\nInline mode keeps native terminal scrollback, shows live elapsed status while working, and preserves output after Ctrl+C."
 }
 
 fn clear_screen() {
@@ -519,6 +545,22 @@ fn format_elapsed(elapsed: std::time::Duration) -> String {
     let secs = elapsed.as_secs();
     let tenths = elapsed.subsec_millis() / 100;
     format!("{secs}.{tenths}s")
+}
+
+fn poll_cancel_request() -> Result<bool> {
+    if !event::poll(std::time::Duration::from_millis(0))? {
+        return Ok(false);
+    }
+    let event = event::read()?;
+    let CEvent::Key(key) = event else {
+        return Ok(false);
+    };
+    if key.kind != KeyEventKind::Press {
+        return Ok(false);
+    }
+
+    Ok(key.code == KeyCode::Esc
+        || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)))
 }
 
 fn stream_markdown_chunk(renderer: &mut MarkdownStreamRenderer, chunk: &str) -> io::Result<()> {
