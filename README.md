@@ -124,6 +124,30 @@ cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 
 --max-tool-rounds
 ```
 
+## Provider Setup
+
+Use this matrix for the fastest correct setup:
+
+| Provider target | Base URL | Recommended key env var | Model example |
+|---|---|---|---|
+| xAI | `https://api.x.ai/v1` | `XAI_API_KEY` (or `GROK_API_KEY`) | `grok-code-fast-1` |
+| OpenAI-compatible | provider endpoint | `OPENAI_API_KEY` (or `GROK_API_KEY`) | `gpt-4.1` |
+
+Example (xAI):
+
+```bash
+export XAI_API_KEY=...
+cargo run -- --base-url https://api.x.ai/v1 --model grok-code-fast-1
+```
+
+Example (OpenAI-compatible):
+
+```bash
+export OPENAI_API_KEY=...
+export OPENAI_BASE_URL=https://api.openai.com/v1
+cargo run -- --model gpt-4.1
+```
+
 ## Settings
 
 User settings are stored in `~/.grok/user-settings.json` and include:
@@ -134,7 +158,7 @@ User settings are stored in `~/.grok/user-settings.json` and include:
 - `models`
 
 API key behavior:
-- Environment variable lookup order is provider-aware:
+- Environment variable lookup order is provider-aware and based on active base URL:
   - xAI: `GROK_API_KEY`, `XAI_API_KEY`, `OPENAI_API_KEY`
   - OpenAI-compatible: `GROK_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`
 - Default mode is `keychain`, which stores/retrieves API keys from the OS credential store:
@@ -143,10 +167,43 @@ API key behavior:
   - Linux Secret Service/libsecret
 - If keychain write is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
 - Set explicit mode with `--api-key-storage keychain` or `--api-key-storage plaintext`.
+- Stored keychain entry is currently shared across providers (single app credential).
+
+Credential precedence for runtime requests:
+1. `--api-key`
+2. Provider-aware environment variables (order above)
+3. Keychain value (when `apiKeyStorage=keychain`)
+4. Plaintext `apiKey` in `~/.grok/user-settings.json`
 
 Base URL behavior:
-- `GROK_BASE_URL` is respected first.
-- `OPENAI_BASE_URL` is also recognized for OpenAI-compatible setups.
+- `--base-url` (if passed) is used and saved
+- else `GROK_BASE_URL`
+- else `OPENAI_BASE_URL`
+- else `baseURL` from `~/.grok/user-settings.json`
+- else default `https://api.x.ai/v1`
+
+## Keychain Operations By OS
+
+Set key into secure storage using the CLI:
+
+```bash
+cargo run -- --api-key-storage keychain --api-key <KEY>
+```
+
+Switch to plaintext mode (not recommended):
+
+```bash
+cargo run -- --api-key-storage plaintext --api-key <KEY>
+```
+
+Inspect/remove in OS store (advanced):
+- Windows: Credential Manager -> Windows Credentials -> Generic Credentials (search for `grok-build`).
+- macOS:
+  - read: `security find-generic-password -s grok-build -a xai_api_key -w`
+  - delete: `security delete-generic-password -s grok-build -a xai_api_key`
+- Linux (Secret Service/libsecret):
+  - read: `secret-tool lookup service grok-build username xai_api_key`
+  - clear: use your keyring UI (for example Seahorse) and remove the `grok-build` entry.
 
 Project settings are stored in `.grok/settings.json` and include:
 - `model`
