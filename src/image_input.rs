@@ -132,11 +132,92 @@ fn try_prepare_attachment(
 }
 
 fn extract_path_like_candidates(input: &str) -> Vec<String> {
-    tokenize_preserving_quotes(input)
+    let mut candidates = tokenize_preserving_quotes(input)
         .into_iter()
         .map(|token| trim_path_punctuation(&token))
         .filter(|token| !token.is_empty())
-        .collect()
+        .collect::<Vec<_>>();
+    candidates.extend(extract_absolute_image_path_candidates(input));
+    candidates
+}
+
+fn extract_absolute_image_path_candidates(input: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut idx = 0usize;
+
+    while idx < input.len() {
+        let rest = &input[idx..];
+        let mut consumed = 1usize;
+        if let Some(path) = try_scan_file_url(rest) {
+            consumed = path.len().max(1);
+            candidates.push(path);
+        } else if let Some(path) = try_scan_absolute_fs_path(rest) {
+            consumed = path.len().max(1);
+            candidates.push(path);
+        }
+        idx += consumed;
+    }
+
+    candidates
+}
+
+fn try_scan_file_url(rest: &str) -> Option<String> {
+    let lower = rest.to_ascii_lowercase();
+    if !lower.starts_with("file://") {
+        return None;
+    }
+
+    let end = find_image_path_end(rest)?;
+    Some(trim_path_punctuation(&rest[..end]))
+}
+
+fn try_scan_absolute_fs_path(rest: &str) -> Option<String> {
+    let bytes = rest.as_bytes();
+    let starts_with_unix_abs = bytes.first().is_some_and(|ch| *ch == b'/');
+    let starts_with_windows_abs = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && is_path_sep(bytes[2]);
+    if !starts_with_unix_abs && !starts_with_windows_abs {
+        return None;
+    }
+
+    let end = find_image_path_end(rest)?;
+    Some(trim_path_punctuation(&rest[..end]))
+}
+
+fn find_image_path_end(rest: &str) -> Option<usize> {
+    const EXTENSIONS: [&str; 6] = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
+
+    let lower = rest.to_ascii_lowercase();
+    let mut best_end: Option<usize> = None;
+
+    for ext in EXTENSIONS {
+        let mut cursor = 0usize;
+        while cursor < lower.len() {
+            let Some(found_rel) = lower[cursor..].find(ext) else {
+                break;
+            };
+            let ext_start = cursor + found_rel;
+            let ext_end = ext_start + ext.len();
+            let trailing = rest[ext_end..].chars().next();
+            if trailing.is_none_or(is_path_terminator) {
+                best_end = Some(best_end.map_or(ext_end, |current| current.min(ext_end)));
+                break;
+            }
+            cursor = ext_end;
+        }
+    }
+
+    best_end
+}
+
+fn is_path_terminator(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, '"' | '\'' | ')' | ']' | '>' | ',' | ';')
+}
+
+fn is_path_sep(ch: u8) -> bool {
+    ch == b'\\' || ch == b'/'
 }
 
 fn extract_markdown_image_candidates(input: &str) -> Vec<String> {
@@ -287,7 +368,12 @@ fn mime_type_for_path(path: &Path) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_markdown_image_candidates, maybe_decode_file_url, percent_decode};
+    use super::{
+        extract_absolute_image_path_candidates, extract_markdown_image_candidates,
+        maybe_decode_file_url, percent_decode, prepare_user_input,
+    };
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parses_markdown_image_paths() {
@@ -307,5 +393,70 @@ mod tests {
     #[test]
     fn percent_decode_keeps_plain_text() {
         assert_eq!(percent_decode("hello_world"), "hello_world");
+    }
+
+    #[test]
+    fn extracts_unquoted_windows_absolute_path_with_spaces() {
+        let text = "what is in C:\\Users\\george\\Desktop\\Screenshot 2026-02-12 164555.png now";
+        let paths = extract_absolute_image_path_candidates(text);
+        assert_eq!(
+            paths,
+            vec!["C:\\Users\\george\\Desktop\\Screenshot 2026-02-12 164555.png"]
+        );
+    }
+
+    #[test]
+    fn extracts_file_url_with_spaces() {
+        let text = "check file:///C:/Users/george/Desktop/Screenshot%202026-02-12%20164555.png";
+        let paths = extract_absolute_image_path_candidates(text);
+        assert_eq!(
+            paths,
+            vec!["file:///C:/Users/george/Desktop/Screenshot%202026-02-12%20164555.png"]
+        );
+    }
+
+    #[test]
+    fn prepare_user_input_attaches_absolute_image_outside_cwd() {
+        let cwd_dir = TempDir::new("image-input-cwd");
+        let image_dir = TempDir::new("image-input-img");
+        let image_path = image_dir.path().join("Screenshot 2026-02-12 164555.png");
+        std::fs::write(&image_path, b"fake-png").expect("write image");
+
+        let input = format!("what do you see {}", image_path.display());
+        let prepared = prepare_user_input(&input, cwd_dir.path());
+        assert_eq!(prepared.attachments.len(), 1);
+        assert_eq!(prepared.warnings.len(), 0);
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let mut path = std::env::temp_dir();
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos();
+            path.push(format!(
+                "grok-build-{}-{}-{}",
+                prefix,
+                std::process::id(),
+                nanos
+            ));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
     }
 }

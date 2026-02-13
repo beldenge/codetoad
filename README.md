@@ -9,6 +9,8 @@ It provides:
 - ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`, `search`, `create_todo_list`, `update_todo_list`)
 - Streaming terminal-native UI built with `crossterm`
 - Multimodal image input support from file paths (drag/drop paths, markdown image links, and `file://` paths)
+  - absolute image paths with spaces are supported (including files outside the current project directory)
+  - image attachment parsing is separate from tool/file sandboxing; normal tools remain project-root constrained
 - Slash commands compatible with the TypeScript app:
   - `/help`
   - `/clear`
