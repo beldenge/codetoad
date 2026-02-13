@@ -69,7 +69,7 @@ Implemented now:
 - Settings loading/saving:
   - `~/.grok/user-settings.json`
   - `.grok/settings.json`
-  - API key storage mode supports secure keychain (default) with plaintext fallback/override
+  - API key storage mode defaults to secure keychain; plaintext storage is opt-in only
   - Provider-aware default models based on configured base URL (`api.x.ai` vs OpenAI-compatible URLs)
   - Provider profiles + active provider selection persisted in user settings
 - Custom instruction loading:
@@ -175,15 +175,17 @@ API key behavior:
   - Windows Credential Manager
   - macOS Keychain
   - Linux Secret Service/libsecret
-- If keychain write/readback is unavailable, the CLI falls back to plaintext `apiKey` in `~/.grok/user-settings.json`.
+- In `keychain` mode, the CLI never writes API keys to plaintext settings.
+- If keychain write/readback is unavailable, the entered key is kept only in-memory for the current process and you will be prompted again next launch.
 - Set explicit mode with `--api-key-storage keychain` or `--api-key-storage plaintext`.
 - Keychain storage is provider-scoped using separate credential accounts per provider id.
 
 Credential precedence for runtime requests:
 1. `--api-key`
 2. Provider-aware environment variables (order above)
-3. Keychain value (when `apiKeyStorage=keychain`)
-4. Plaintext `apiKey` in `~/.grok/user-settings.json`
+3. In-memory session key (when keychain persist failed in current run)
+4. Keychain value (when `apiKeyStorage=keychain`)
+5. Plaintext `apiKey` in `~/.grok/user-settings.json` (only when `apiKeyStorage=plaintext`)
 
 Base URL behavior:
 - `--base-url` (if passed) is used and saved

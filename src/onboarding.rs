@@ -69,9 +69,9 @@ pub fn ensure_active_provider_api_key(settings: &mut SettingsManager) -> Result<
         ApiKeySaveLocation::Keychain => {
             println!("Saved API key to secure OS keychain.");
         }
-        ApiKeySaveLocation::PlaintextFallback => {
+        ApiKeySaveLocation::SessionOnly => {
             println!(
-                "Saved API key to ~/.grok/user-settings.json (keychain unavailable; fallback active)."
+                "Could not persist API key to keychain. Using it only for this run; you will be prompted again next launch."
             );
         }
         ApiKeySaveLocation::Plaintext => {

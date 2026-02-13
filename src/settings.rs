@@ -70,6 +70,7 @@ pub struct SettingsManager {
     project_settings_path: PathBuf,
     user_settings: UserSettings,
     project_settings: ProjectSettings,
+    session_api_keys: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +83,7 @@ pub enum ApiKeyStorageMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiKeySaveLocation {
     Keychain,
-    PlaintextFallback,
+    SessionOnly,
     Plaintext,
 }
 
@@ -115,6 +116,7 @@ impl SettingsManager {
             project_settings_path,
             user_settings,
             project_settings,
+            session_api_keys: BTreeMap::new(),
         };
 
         manager.ensure_default_files()?;
@@ -164,6 +166,12 @@ impl SettingsManager {
         }
 
         let active_provider_id = self.active_provider_id();
+        if let Some(from_session) = self.session_api_keys.get(&active_provider_id)
+            && !from_session.trim().is_empty()
+        {
+            return Some(from_session.clone());
+        }
+
         if self.get_api_key_storage_mode() == ApiKeyStorageMode::Keychain {
             if let Ok(Some(from_keychain)) = load_api_key_from_keychain(&active_provider_id)
                 && !from_keychain.trim().is_empty()
@@ -175,6 +183,8 @@ impl SettingsManager {
             {
                 return Some(legacy);
             }
+
+            return None;
         }
 
         self.active_provider_profile()
@@ -237,6 +247,7 @@ impl SettingsManager {
         match mode {
             ApiKeyStorageMode::Keychain => {
                 self.maybe_migrate_plaintext_api_key_to_keychain()?;
+                self.clear_plaintext_api_key_for_active();
                 self.save_user()
             }
             ApiKeyStorageMode::Plaintext => {
@@ -265,33 +276,30 @@ impl SettingsManager {
                         .flatten()
                         .is_some_and(|value| !value.trim().is_empty());
                     if keychain_readback {
-                        if let Some(profile) = self.active_provider_profile_mut() {
-                            profile.api_key = None;
-                        }
-                        self.user_settings.api_key = None;
+                        self.clear_plaintext_api_key_for_active();
+                        self.session_api_keys.remove(&active_provider_id);
                         self.save_user()?;
                         Ok(ApiKeySaveLocation::Keychain)
                     } else {
-                        if let Some(profile) = self.active_provider_profile_mut() {
-                            profile.api_key = Some(api_key.to_string());
-                        }
-                        self.sync_legacy_fields_from_active();
+                        self.clear_plaintext_api_key_for_active();
+                        self.session_api_keys
+                            .insert(active_provider_id, api_key.to_string());
                         self.save_user()?;
-                        Ok(ApiKeySaveLocation::PlaintextFallback)
+                        Ok(ApiKeySaveLocation::SessionOnly)
                     }
                 } else {
-                    if let Some(profile) = self.active_provider_profile_mut() {
-                        profile.api_key = Some(api_key.to_string());
-                    }
-                    self.sync_legacy_fields_from_active();
+                    self.clear_plaintext_api_key_for_active();
+                    self.session_api_keys
+                        .insert(active_provider_id, api_key.to_string());
                     self.save_user()?;
-                    Ok(ApiKeySaveLocation::PlaintextFallback)
+                    Ok(ApiKeySaveLocation::SessionOnly)
                 }
             }
             ApiKeyStorageMode::Plaintext => {
                 if let Some(profile) = self.active_provider_profile_mut() {
                     profile.api_key = Some(api_key.to_string());
                 }
+                self.session_api_keys.remove(&active_provider_id);
                 self.sync_legacy_fields_from_active();
                 self.save_user()?;
                 Ok(ApiKeySaveLocation::Plaintext)
@@ -532,6 +540,13 @@ impl SettingsManager {
         }
         self.user_settings.settings_version = Some(SETTINGS_VERSION);
     }
+
+    fn clear_plaintext_api_key_for_active(&mut self) {
+        if let Some(profile) = self.active_provider_profile_mut() {
+            profile.api_key = None;
+        }
+        self.user_settings.api_key = None;
+    }
 }
 
 fn migrate_user_settings(settings: &mut UserSettings) {
@@ -682,18 +697,18 @@ impl SettingsManager {
             return Ok(());
         };
 
-        if store_api_key_in_keychain(&provider_id, &api_key).is_ok()
+        let migrated = store_api_key_in_keychain(&provider_id, &api_key).is_ok()
             && load_api_key_from_keychain(&provider_id)
                 .ok()
                 .flatten()
-                .is_some_and(|value| !value.trim().is_empty())
-        {
-            if let Some(profile) = self.active_provider_profile_mut() {
-                profile.api_key = None;
-            }
-            self.sync_legacy_fields_from_active();
-            self.save_user()?;
+                .is_some_and(|value| !value.trim().is_empty());
+
+        self.clear_plaintext_api_key_for_active();
+        if migrated {
+            self.session_api_keys.remove(&provider_id);
         }
+        self.sync_legacy_fields_from_active();
+        self.save_user()?;
         Ok(())
     }
 }
