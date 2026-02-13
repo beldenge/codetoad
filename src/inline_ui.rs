@@ -4,6 +4,9 @@ use crate::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushStep,
     run_commit_and_push as run_commit_and_push_flow,
 };
+use crate::inline_feedback::{
+    print_logo_and_tips, print_tool_result, prompt_tool_confirmation, tool_label,
+};
 use crate::inline_markdown::{
     MarkdownStreamRenderer, flush_markdown_pending, stream_markdown_chunk,
 };
@@ -12,7 +15,6 @@ use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
 use crate::settings::SettingsManager;
-use crate::tool_catalog::tool_display_name;
 use crate::tools::{ToolResult, execute_bash_command};
 use anyhow::Result;
 use crossterm::event::{self, DisableMouseCapture, Event as CEvent, KeyCode, KeyEventKind, KeyModifiers};
@@ -334,7 +336,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 phase = "running tools";
                 tool_calls_seen += calls.len();
                 for call in calls {
-                    let label = format!("{}({})", pretty_tool_name(&call.name), tool_target(&call));
+                    let label = tool_label(&call);
                     println!(
                         "{} {}",
                         "◦".magenta(),
@@ -359,11 +361,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 } else {
                     "running tools"
                 };
-                let label = format!(
-                    "{}({})",
-                    pretty_tool_name(&tool_call.name),
-                    tool_target(&tool_call)
-                );
+                let label = tool_label(&tool_call);
                 let elapsed = tool_started_at
                     .remove(&tool_call.id)
                     .map(|start| format_elapsed(start.elapsed()))
@@ -502,146 +500,6 @@ async fn run_commit_and_push(agent: Arc<Mutex<Agent>>) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn print_logo_and_tips() {
-    for line in include_str!("../banner.txt").lines() {
-        println!("{line}");
-    }
-    println!();
-    println!("Tips for getting started:");
-    println!("1. Ask questions, edit files, or run commands.");
-    println!("2. Use /help for slash commands.");
-    println!("3. Scrollback is native in inline mode (no alternate screen).");
-    println!();
-}
-
-fn print_tool_result(call: ToolCallSummary, result: ToolResult) {
-    println!(
-        "{} {}",
-        "●".magenta(),
-        format!("{}({})", pretty_tool_name(&call.name), tool_target(&call)).white()
-    );
-    if result.success {
-        if let Some(output) = result.output {
-            for line in output.replace("\r\n", "\n").split('\n') {
-                println!("{}", format!("  -> {line}").dark_grey());
-            }
-        } else {
-            println!("{}", "  -> Success".dark_grey());
-        }
-    } else if let Some(error) = result.error {
-        for line in error.replace("\r\n", "\n").split('\n') {
-            println!("{}", format!("  -> {line}").red());
-        }
-    } else {
-        println!("{}", "  -> Error".red());
-    }
-}
-
-fn prompt_tool_confirmation(
-    tool_call: &ToolCallSummary,
-    operation: ConfirmationOperation,
-) -> Result<ConfirmationDecision> {
-    println!();
-    println!(
-        "{} {}",
-        "◦".yellow(),
-        format!(
-            "Confirmation required: {}({})",
-            pretty_tool_name(&tool_call.name),
-            tool_target(tool_call)
-        )
-        .yellow()
-    );
-    println!("{}", format!("  operation: {}", confirmation_operation_label(operation)).dark_grey());
-    println!(
-        "{}",
-        format!("  details: {}", confirmation_detail(tool_call)).dark_grey()
-    );
-    println!(
-        "{}",
-        "  [y] approve once   [a] approve all for this session   [n]/[Esc] reject".dark_grey()
-    );
-    io::stdout().flush()?;
-
-    loop {
-        let event = event::read()?;
-        let CEvent::Key(key) = event else {
-            continue;
-        };
-        if key.kind != KeyEventKind::Press {
-            continue;
-        }
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                println!("{}", "  -> approved".dark_green());
-                return Ok(ConfirmationDecision::Approve {
-                    tool_call_id: tool_call.id.clone(),
-                    remember_for_session: false,
-                });
-            }
-            KeyCode::Char('a') | KeyCode::Char('A') => {
-                println!(
-                    "{}",
-                    format!(
-                        "  -> approved and remembered for {}",
-                        confirmation_operation_label(operation)
-                    )
-                    .dark_green()
-                );
-                return Ok(ConfirmationDecision::Approve {
-                    tool_call_id: tool_call.id.clone(),
-                    remember_for_session: true,
-                });
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                println!("{}", "  -> rejected".red());
-                return Ok(ConfirmationDecision::Reject {
-                    tool_call_id: tool_call.id.clone(),
-                    feedback: None,
-                });
-            }
-            _ => {}
-        }
-    }
-}
-
-fn confirmation_operation_label(operation: ConfirmationOperation) -> &'static str {
-    match operation {
-        ConfirmationOperation::File => "file operations",
-        ConfirmationOperation::Bash => "bash commands",
-    }
-}
-
-fn confirmation_detail(tool_call: &ToolCallSummary) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&tool_call.arguments) {
-        if let Some(command) = value.get("command").and_then(serde_json::Value::as_str) {
-            return format!("command: {command}");
-        }
-        if let Some(path) = value.get("path").and_then(serde_json::Value::as_str) {
-            return format!("path: {path}");
-        }
-    }
-    "operation details unavailable".to_string()
-}
-
-fn pretty_tool_name(name: &str) -> &str {
-    tool_display_name(name)
-}
-
-fn tool_target(tool: &ToolCallSummary) -> String {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&tool.arguments) {
-        return value
-            .get("path")
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| value.get("command").and_then(serde_json::Value::as_str))
-            .or_else(|| value.get("query").and_then(serde_json::Value::as_str))
-            .or_else(|| value.get("id").and_then(serde_json::Value::as_str))
-            .unwrap_or("")
-            .to_string();
-    }
-    String::new()
 }
 
 fn is_direct_command(input: &str) -> bool {

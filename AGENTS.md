@@ -29,6 +29,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - prompt input editor, key handling, slash suggestion panel, and model picker UI
 - `src/inline_markdown.rs`
   - markdown-aware streaming renderer and lightweight code syntax highlighting
+- `src/inline_feedback.rs`
+  - shared inline output helpers (banner/tips, tool result rendering, confirmation prompt)
+  - tool label/target formatting used by inline orchestration
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
 - `src/custom_instructions.rs`
@@ -70,7 +73,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - tool lifecycle timeline (start/result + durations + response summary)
   - active generation cancellation via `Esc`/`Ctrl+C`
   - live status telemetry with approximate token counts and auto-edit mode indicator
-  - interactive tool confirmation prompts (`y/a/n`) and auto-edit bypass
+  - auto-edit bypass + confirmation routing integration
 
 ## UI Direction
 

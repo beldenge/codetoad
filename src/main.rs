@@ -4,6 +4,7 @@ mod confirmation;
 mod custom_instructions;
 mod git_ops;
 mod grok_client;
+mod inline_feedback;
 mod inline_markdown;
 mod inline_prompt;
 mod inline_ui;
