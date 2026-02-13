@@ -161,11 +161,7 @@ impl Agent {
         });
 
         for _ in 0..self.max_tool_rounds {
-            let search_mode = if should_use_search_for(user_message) {
-                SearchMode::Auto
-            } else {
-                SearchMode::Off
-            };
+            let search_mode = search_mode_for(user_message);
 
             let response = self
                 .client
@@ -188,8 +184,7 @@ impl Agent {
 
             if let Some(tool_calls) = assistant_tool_calls {
                 for call in tool_calls {
-                    let parsed_args = serde_json::from_str::<Value>(&call.function.arguments)
-                        .unwrap_or_else(|_| json!({}));
+                    let parsed_args = parse_tool_arguments(&call.function.arguments);
                     let result = execute_tool(&call.function.name, &parsed_args).await;
                     self.messages.push(ChatMessage {
                         role: "tool".to_string(),
@@ -225,23 +220,14 @@ impl Agent {
 
         for _ in 0..self.max_tool_rounds {
             if cancel_token.is_cancelled() {
-                updates
-                    .send(AgentEvent::Content(
-                        "\n\n[Operation cancelled by user]".to_string(),
-                    ))
-                    .ok();
-                updates.send(AgentEvent::Done).ok();
+                send_cancelled(&updates);
                 return Ok(());
             }
 
             let mut content = String::new();
             let mut partial_calls: Vec<PartialToolCall> = Vec::new();
             let mut last_token_emit = std::time::Instant::now();
-            let search_mode = if should_use_search_for(&user_message) {
-                SearchMode::Auto
-            } else {
-                SearchMode::Off
-            };
+            let search_mode = search_mode_for(&user_message);
 
             self.client
                 .stream_chat(
@@ -276,12 +262,7 @@ impl Agent {
                 .await?;
 
             if cancel_token.is_cancelled() {
-                updates
-                    .send(AgentEvent::Content(
-                        "\n\n[Operation cancelled by user]".to_string(),
-                    ))
-                    .ok();
-                updates.send(AgentEvent::Done).ok();
+                send_cancelled(&updates);
                 return Ok(());
             }
 
@@ -336,12 +317,7 @@ impl Agent {
 
             for tool_call in tool_calls {
                 if cancel_token.is_cancelled() {
-                    updates
-                        .send(AgentEvent::Content(
-                            "\n\n[Operation cancelled by user]".to_string(),
-                        ))
-                        .ok();
-                    updates.send(AgentEvent::Done).ok();
+                    send_cancelled(&updates);
                     return Ok(());
                 }
 
@@ -373,9 +349,7 @@ impl Agent {
                     }
                 }
 
-                let parsed_args = serde_json::from_str::<Value>(&tool_call.arguments)
-                    .with_context(|| format!("Invalid tool call arguments for {}", tool_call.name))
-                    .unwrap_or_else(|_| json!({}));
+                let parsed_args = parse_tool_arguments(&tool_call.arguments);
                 let result = execute_tool(&tool_call.name, &parsed_args).await;
 
                 self.messages.push(ChatMessage {
@@ -776,6 +750,14 @@ fn default_tools() -> Vec<ChatTool> {
     ]
 }
 
+fn search_mode_for(message: &str) -> SearchMode {
+    if should_use_search_for(message) {
+        SearchMode::Auto
+    } else {
+        SearchMode::Off
+    }
+}
+
 fn should_use_search_for(message: &str) -> bool {
     let lowered = message.to_lowercase();
     let keywords = [
@@ -790,6 +772,19 @@ fn should_use_search_for(message: &str) -> bool {
         "changelog",
     ];
     keywords.iter().any(|k| lowered.contains(k))
+}
+
+fn parse_tool_arguments(arguments: &str) -> Value {
+    serde_json::from_str::<Value>(arguments).unwrap_or_else(|_| json!({}))
+}
+
+fn send_cancelled(updates: &mpsc::UnboundedSender<AgentEvent>) {
+    updates
+        .send(AgentEvent::Content(
+            "\n\n[Operation cancelled by user]".to_string(),
+        ))
+        .ok();
+    updates.send(AgentEvent::Done).ok();
 }
 
 fn confirmation_operation_for_tool(tool_name: &str) -> Option<ConfirmationOperation> {

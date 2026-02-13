@@ -24,15 +24,71 @@ use tokio_util::sync::CancellationToken;
 const DIRECT_COMMANDS: &[&str] = &[
     "ls", "pwd", "cd", "cat", "mkdir", "touch", "echo", "grep", "find", "cp", "mv", "rm",
 ];
-const COMMAND_SUGGESTIONS: &[(&str, &str)] = &[
-    ("/help", "Show help information"),
-    ("/clear", "Clear chat history"),
-    ("/models", "Switch Grok model"),
-    ("/commit-and-push", "AI commit and push"),
-    ("/exit", "Exit application"),
+const SLASH_COMMANDS: &[SlashCommand] = &[
+    SlashCommand::new(
+        "/help",
+        "Show help information",
+        CommandGroup::BuiltIn,
+        true,
+    ),
+    SlashCommand::new(
+        "/clear",
+        "Clear chat history",
+        CommandGroup::BuiltIn,
+        true,
+    ),
+    SlashCommand::new(
+        "/models",
+        "Switch between available models",
+        CommandGroup::BuiltIn,
+        true,
+    ),
+    SlashCommand::new(
+        "/models <name>",
+        "Set model directly",
+        CommandGroup::BuiltIn,
+        false,
+    ),
+    SlashCommand::new("/exit", "Exit application", CommandGroup::BuiltIn, true),
+    SlashCommand::new(
+        "/commit-and-push",
+        "AI-generated commit and push",
+        CommandGroup::Git,
+        true,
+    ),
 ];
 const STATUS_FRAMES: &[&str] = &["-", "\\", "|", "/"];
 const STREAM_FLUSH_THRESHOLD: usize = 16;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CommandGroup {
+    BuiltIn,
+    Git,
+}
+
+#[derive(Clone, Copy)]
+struct SlashCommand {
+    command: &'static str,
+    description: &'static str,
+    group: CommandGroup,
+    show_in_suggestions: bool,
+}
+
+impl SlashCommand {
+    const fn new(
+        command: &'static str,
+        description: &'static str,
+        group: CommandGroup,
+        show_in_suggestions: bool,
+    ) -> Self {
+        Self {
+            command,
+            description,
+            group,
+            show_in_suggestions,
+        }
+    }
+}
 
 #[derive(Default)]
 struct MarkdownStreamRenderer {
@@ -295,11 +351,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
         };
 
         let Some(event) = event else {
-            clear_status_line(&mut status_width)?;
-            if started_content {
-                flush_markdown_pending(&mut renderer)?;
-                println!();
-            }
+            finalize_stream_output(&mut started_content, &mut renderer, &mut status_width)?;
             break;
         };
 
@@ -319,24 +371,14 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 tool_call,
                 operation,
             } => {
-                if started_content {
-                    flush_markdown_pending(&mut renderer)?;
-                    println!();
-                    started_content = false;
-                }
-                clear_status_line(&mut status_width)?;
+                prepare_for_aux_output(&mut started_content, &mut renderer, &mut status_width)?;
                 let decision = prompt_tool_confirmation(&tool_call, operation)?;
                 confirm_tx.send(decision).ok();
             }
             AgentEvent::ToolCalls(calls) => {
-                if started_content {
-                    flush_markdown_pending(&mut renderer)?;
-                    println!();
-                    started_content = false;
-                }
+                prepare_for_aux_output(&mut started_content, &mut renderer, &mut status_width)?;
                 phase = "running tools";
                 tool_calls_seen += calls.len();
-                clear_status_line(&mut status_width)?;
                 for call in calls {
                     let label = format!("{}({})", pretty_tool_name(&call.name), tool_target(&call));
                     println!(
@@ -354,11 +396,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 }
             }
             AgentEvent::ToolResult { tool_call, result } => {
-                if started_content {
-                    flush_markdown_pending(&mut renderer)?;
-                    println!();
-                    started_content = false;
-                }
+                prepare_for_aux_output(&mut started_content, &mut renderer, &mut status_width)?;
                 tool_results_seen = tool_results_seen.saturating_add(1);
                 phase = if tool_calls_seen == 0 {
                     "running tools"
@@ -367,7 +405,6 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 } else {
                     "running tools"
                 };
-                clear_status_line(&mut status_width)?;
                 let label = format!(
                     "{}({})",
                     pretty_tool_name(&tool_call.name),
@@ -395,11 +432,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 print_tool_result(tool_call, result);
             }
             AgentEvent::Done => {
-                clear_status_line(&mut status_width)?;
-                if started_content {
-                    flush_markdown_pending(&mut renderer)?;
-                    println!();
-                }
+                finalize_stream_output(&mut started_content, &mut renderer, &mut status_width)?;
                 if tool_calls_seen > 0 {
                     println!(
                         "{}",
@@ -424,11 +457,7 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
                 break;
             }
             AgentEvent::Error(err) => {
-                clear_status_line(&mut status_width)?;
-                if started_content {
-                    flush_markdown_pending(&mut renderer)?;
-                    println!();
-                }
+                finalize_stream_output(&mut started_content, &mut renderer, &mut status_width)?;
                 if tool_calls_seen > 0 {
                     println!(
                         "{}",
@@ -445,6 +474,33 @@ async fn stream_agent_message(message: String, agent: Arc<Mutex<Agent>>) -> Resu
         }
     }
 
+    Ok(())
+}
+
+fn prepare_for_aux_output(
+    started_content: &mut bool,
+    renderer: &mut MarkdownStreamRenderer,
+    status_width: &mut usize,
+) -> io::Result<()> {
+    if *started_content {
+        flush_markdown_pending(renderer)?;
+        println!();
+        *started_content = false;
+    }
+    clear_status_line(status_width)
+}
+
+fn finalize_stream_output(
+    started_content: &mut bool,
+    renderer: &mut MarkdownStreamRenderer,
+    status_width: &mut usize,
+) -> io::Result<()> {
+    clear_status_line(status_width)?;
+    if *started_content {
+        flush_markdown_pending(renderer)?;
+        println!();
+        *started_content = false;
+    }
     Ok(())
 }
 
@@ -648,8 +704,30 @@ fn is_direct_command(input: &str) -> bool {
     DIRECT_COMMANDS.contains(&first)
 }
 
-fn help_text() -> &'static str {
-    "Grok Build Help:\n\nBuilt-in Commands:\n  /clear            Clear chat history\n  /help             Show this help\n  /models           Switch between available models\n  /models <name>    Set model directly\n  /exit             Exit application\n\nGit Commands:\n  /commit-and-push  AI-generated commit and push\n\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\nInput Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Shift+Tab     Toggle auto-edit mode (bypass confirmations)\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\nConfirmation Controls:\n  y             Approve operation once\n  a             Approve this operation type for session\n  n / Esc       Reject operation\n\nActive Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\nInline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C."
+fn help_text() -> String {
+    let mut output = String::from("Grok Build Help:\n\n");
+    append_help_section(&mut output, "Built-in Commands", CommandGroup::BuiltIn);
+    output.push('\n');
+    append_help_section(&mut output, "Git Commands", CommandGroup::Git);
+    output.push_str(
+        "\nDirect Commands:\n  ls, pwd, cd, cat, mkdir, touch, echo, grep, find, cp, mv, rm\n\n\
+Input Controls:\n  Up/Down       History (or command suggestion selection)\n  Left/Right    Move cursor\n  Tab           Accept command suggestion\n  Shift+Tab     Toggle auto-edit mode (bypass confirmations)\n  Enter         Submit input (or accept suggestion when / command hints are visible)\n  Ctrl+A/E      Start/end of line\n  Ctrl+U/W      Delete to start / delete previous word\n  Ctrl+C        Clear input (press twice on empty input to exit)\n\n\
+Confirmation Controls:\n  y             Approve operation once\n  a             Approve this operation type for session\n  n / Esc       Reject operation\n\n\
+Active Generation Controls:\n  Esc or Ctrl+C Cancel the current generation/tool loop\n\n\
+Inline mode keeps native terminal scrollback, shows live elapsed + token status while working, and preserves output after Ctrl+C.",
+    );
+    output
+}
+
+fn append_help_section(output: &mut String, title: &str, group: CommandGroup) {
+    output.push_str(title);
+    output.push_str(":\n");
+    for command in SLASH_COMMANDS.iter().filter(|entry| entry.group == group) {
+        output.push_str(&format!(
+            "  {:<18} {}\n",
+            command.command, command.description
+        ));
+    }
 }
 
 fn clear_screen() {
@@ -1051,11 +1129,12 @@ fn read_prompt_line(
     let mut ctrl_c_armed = false;
     let mut selected_suggestion_idx = 0usize;
     let mut rendered_panel_lines = 0usize;
-    let panel = build_prompt_panel(&input, selected_suggestion_idx, *auto_edit, current_model);
-    render_prompt_with_suggestions(
+    rerender_prompt_input(
         &input,
         cursor,
-        &panel,
+        selected_suggestion_idx,
+        *auto_edit,
+        current_model,
         &mut rendered_panel_lines,
     )?;
 
@@ -1073,7 +1152,7 @@ fn read_prompt_line(
                 let suggestions = filtered_command_suggestions(&input);
                 if !suggestions.is_empty() {
                     let safe = selected_suggestion_idx.min(suggestions.len().saturating_sub(1));
-                    let selected = suggestions[safe].0;
+                    let selected = suggestions[safe].command;
                     let trimmed = input.trim();
                     if trimmed != selected {
                         input = format!("{selected} ");
@@ -1081,12 +1160,12 @@ fn read_prompt_line(
                         ctrl_c_armed = false;
                         history_idx = None;
                         selected_suggestion_idx = 0;
-                        let panel =
-                            build_prompt_panel(&input, selected_suggestion_idx, *auto_edit, current_model);
-                        render_prompt_with_suggestions(
+                        rerender_prompt_input(
                             &input,
                             cursor,
-                            &panel,
+                            selected_suggestion_idx,
+                            *auto_edit,
+                            current_model,
                             &mut rendered_panel_lines,
                         )?;
                         continue;
@@ -1240,7 +1319,7 @@ fn read_prompt_line(
                 let suggestions = filtered_command_suggestions(&input);
                 if !suggestions.is_empty() {
                     let safe = selected_suggestion_idx.min(suggestions.len().saturating_sub(1));
-                    input = format!("{} ", suggestions[safe].0);
+                    input = format!("{} ", suggestions[safe].command);
                     cursor = input.len();
                     history_idx = None;
                     selected_suggestion_idx = 0;
@@ -1263,14 +1342,27 @@ fn read_prompt_line(
             }
         }
 
-        let panel = build_prompt_panel(&input, selected_suggestion_idx, *auto_edit, current_model);
-        render_prompt_with_suggestions(
+        rerender_prompt_input(
             &input,
             cursor,
-            &panel,
+            selected_suggestion_idx,
+            *auto_edit,
+            current_model,
             &mut rendered_panel_lines,
         )?;
     }
+}
+
+fn rerender_prompt_input(
+    input: &str,
+    cursor: usize,
+    selected_suggestion_idx: usize,
+    auto_edit: bool,
+    current_model: &str,
+    rendered_panel_lines: &mut usize,
+) -> io::Result<()> {
+    let panel = build_prompt_panel(input, selected_suggestion_idx, auto_edit, current_model);
+    render_prompt_with_suggestions(input, cursor, &panel, rendered_panel_lines)
 }
 
 fn render_prompt_with_suggestions(
@@ -1473,16 +1565,16 @@ fn previous_word_start(input: &str, cursor: usize) -> usize {
     index
 }
 
-fn filtered_command_suggestions(input: &str) -> Vec<(&'static str, &'static str)> {
+fn filtered_command_suggestions(input: &str) -> Vec<&'static SlashCommand> {
     if !input.starts_with('/') {
         return Vec::new();
     }
 
     let prefix = input.trim();
-    COMMAND_SUGGESTIONS
+    SLASH_COMMANDS
         .iter()
-        .copied()
-        .filter(|(cmd, _)| cmd.starts_with(prefix))
+        .filter(|entry| entry.show_in_suggestions)
+        .filter(|entry| entry.command.starts_with(prefix))
         .collect()
 }
 
@@ -1513,9 +1605,12 @@ fn build_prompt_panel(
     lines.push("slash commands:".to_string());
     let safe = selected_index.min(matches.len().saturating_sub(1));
     let display_limit = 6usize;
-    for (idx, (cmd, description)) in matches.iter().take(display_limit).enumerate() {
+    for (idx, command) in matches.iter().take(display_limit).enumerate() {
         let marker = if idx == safe { ">" } else { " " };
-        lines.push(format!("  {marker} {cmd:<18} {description}"));
+        lines.push(format!(
+            "  {marker} {:<18} {}",
+            command.command, command.description
+        ));
     }
     if matches.len() > display_limit {
         lines.push(format!("    ... +{} more", matches.len() - display_limit));
