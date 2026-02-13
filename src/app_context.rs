@@ -50,4 +50,10 @@ impl AppContext {
         }
         self.agent.lock().await.set_auto_edit_enabled(enabled);
     }
+
+    pub async fn sync_auto_edit_from_agent(&self) {
+        let enabled = self.agent.lock().await.auto_edit_enabled();
+        let mut flags = self.runtime_flags.lock().await;
+        flags.auto_edit = enabled;
+    }
 }

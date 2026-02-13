@@ -12,6 +12,7 @@ use crate::inline_markdown::{
     MarkdownStreamRenderer, flush_markdown_pending, stream_markdown_chunk,
 };
 use crate::inline_prompt::{read_prompt_line, select_model_inline};
+use crate::session_store::{list_sessions, load_session, save_session};
 use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
@@ -161,6 +162,41 @@ async fn handle_slash_command(
             } else {
                 println!("Invalid model: {model}");
                 println!("Available: {}", available.join(", "));
+            }
+        }
+        ParsedSlashCommand::Save(name) => {
+            let snapshot = app.agent().lock().await.session_snapshot()?;
+            let saved_name = save_session(app.cwd(), name.as_deref(), snapshot)?;
+            println!("Saved session: {saved_name}");
+        }
+        ParsedSlashCommand::Load(name) => {
+            if name.trim().is_empty() {
+                println!("Usage: /load <name>");
+                let sessions = list_sessions(app.cwd())?;
+                if sessions.is_empty() {
+                    println!("No saved sessions.");
+                } else {
+                    println!("Saved sessions:");
+                    for session in sessions {
+                        println!("  {session}");
+                    }
+                }
+                return Ok(());
+            }
+            let snapshot = load_session(app.cwd(), &name)?;
+            app.agent().lock().await.restore_session_snapshot(snapshot)?;
+            app.sync_auto_edit_from_agent().await;
+            println!("Loaded session: {name}");
+        }
+        ParsedSlashCommand::Sessions => {
+            let sessions = list_sessions(app.cwd())?;
+            if sessions.is_empty() {
+                println!("No saved sessions.");
+            } else {
+                println!("Saved sessions:");
+                for session in sessions {
+                    println!("  {session}");
+                }
             }
         }
         ParsedSlashCommand::CommitAndPush => {
@@ -508,6 +544,8 @@ fn is_direct_command(input: &str) -> bool {
 fn help_text() -> String {
     let mut output = String::from("Grok Build Help:\n\n");
     append_help_section(&mut output, "Built-in Commands", CommandGroup::BuiltIn);
+    output.push('\n');
+    append_help_section(&mut output, "Session Commands", CommandGroup::Session);
     output.push('\n');
     append_help_section(&mut output, "Git Commands", CommandGroup::Git);
     output.push_str(

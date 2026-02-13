@@ -3,7 +3,8 @@ use crate::tool_catalog::{
     TOOL_UPDATE_TODO_LIST, TOOL_VIEW_FILE,
 };
 use crate::tool_context::ToolContext;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -22,12 +23,35 @@ pub(crate) struct ToolSessionState {
     todo_store: TodoStore,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct ToolSessionSnapshot {
+    current_dir: String,
+    todos: Value,
+}
+
 impl ToolSessionState {
     pub(crate) fn new(project_root: PathBuf) -> Result<Self> {
         Ok(Self {
             tool_context: ToolContext::new(project_root)?,
             todo_store: TodoStore::default(),
         })
+    }
+
+    pub(crate) fn snapshot(&self) -> Result<ToolSessionSnapshot> {
+        Ok(ToolSessionSnapshot {
+            current_dir: self.tool_context.relative_current_dir(),
+            todos: self.todo_store.snapshot_value()?,
+        })
+    }
+
+    pub(crate) fn restore(&mut self, snapshot: ToolSessionSnapshot) -> Result<()> {
+        self.tool_context
+            .restore_relative_current_dir(&snapshot.current_dir)
+            .context("Failed restoring working directory state")?;
+        self.todo_store
+            .restore_value(snapshot.todos)
+            .context("Failed restoring todo state")?;
+        Ok(())
     }
 }
 

@@ -39,6 +39,9 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
   - tool label/target formatting used by inline orchestration
 - `src/settings.rs`
   - `~/.grok/user-settings.json` and `.grok/settings.json`
+- `src/session_store.rs`
+  - session persistence helpers for saving/loading/listing `.grok/sessions/*.json`
+  - validates session file version and normalizes session names
 - `src/custom_instructions.rs`
   - loads `.grok/GROK.md` and `~/.grok/GROK.md`
 - `src/grok_client.rs`
@@ -104,6 +107,10 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `/clear`
 - `/models`
 - `/models <name>`
+- `/save`
+- `/save <name>`
+- `/load <name>`
+- `/sessions`
 - `/commit-and-push`
 - `/exit`
 

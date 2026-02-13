@@ -9,8 +9,11 @@ use crate::protocol::{
     ChatCompletionStreamChunk, ChatMessage, ChatTool, ChatToolCall, ChatToolCallFunction,
 };
 use crate::tool_catalog::{confirmation_operation_for_tool, default_tools};
-use crate::tools::{ToolResult, ToolSessionState, execute_bash_command, execute_tool};
+use crate::tools::{
+    ToolResult, ToolSessionSnapshot, ToolSessionState, execute_bash_command, execute_tool,
+};
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::Path;
 use std::sync::Arc;
@@ -52,6 +55,16 @@ pub enum AgentEvent {
     },
     Error(String),
     Done,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AgentSessionSnapshot {
+    pub model: String,
+    pub messages: Vec<ChatMessage>,
+    pub tool_session: ToolSessionSnapshot,
+    pub auto_edit_enabled: bool,
+    pub session_allow_file_ops: bool,
+    pub session_allow_bash_ops: bool,
 }
 
 pub struct Agent<C: ModelClient = GrokClient> {
@@ -107,6 +120,10 @@ impl<C: ModelClient> Agent<C> {
         self.client.current_model()
     }
 
+    pub fn auto_edit_enabled(&self) -> bool {
+        self.auto_edit_enabled
+    }
+
     pub fn set_model(&mut self, model: String) {
         self.client.set_model(model);
     }
@@ -150,6 +167,36 @@ impl<C: ModelClient> Agent<C> {
 
     pub async fn generate_plain_text(&self, prompt: &str) -> Result<String> {
         self.client.plain_completion(prompt).await
+    }
+
+    pub(crate) fn session_snapshot(&self) -> Result<AgentSessionSnapshot> {
+        Ok(AgentSessionSnapshot {
+            model: self.current_model().to_string(),
+            messages: self.messages.clone(),
+            tool_session: self.tool_session.snapshot()?,
+            auto_edit_enabled: self.auto_edit_enabled,
+            session_allow_file_ops: self.session_allow_file_ops,
+            session_allow_bash_ops: self.session_allow_bash_ops,
+        })
+    }
+
+    pub(crate) fn restore_session_snapshot(&mut self, snapshot: AgentSessionSnapshot) -> Result<()> {
+        self.client.set_model(snapshot.model);
+        self.messages = if snapshot.messages.is_empty() {
+            vec![ChatMessage {
+                role: "system".to_string(),
+                content: Some(self.system_prompt.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+            }]
+        } else {
+            snapshot.messages
+        };
+        self.tool_session.restore(snapshot.tool_session)?;
+        self.auto_edit_enabled = snapshot.auto_edit_enabled;
+        self.session_allow_file_ops = snapshot.session_allow_file_ops;
+        self.session_allow_bash_ops = snapshot.session_allow_bash_ops;
+        Ok(())
     }
 
     pub async fn execute_bash_command(&mut self, command: &str) -> Result<ToolResult> {

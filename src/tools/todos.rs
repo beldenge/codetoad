@@ -1,9 +1,9 @@
 use super::ToolResult;
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 struct TodoItem {
     id: String,
     content: String,
@@ -25,6 +25,26 @@ struct TodoUpdate {
 #[derive(Debug, Default, Clone)]
 pub(crate) struct TodoStore {
     items: Vec<TodoItem>,
+}
+
+impl TodoStore {
+    pub(crate) fn snapshot_value(&self) -> Result<Value> {
+        serde_json::to_value(&self.items).context("Failed serializing todo store")
+    }
+
+    pub(crate) fn restore_value(&mut self, value: Value) -> Result<()> {
+        let restored: Vec<TodoItem> =
+            serde_json::from_value(value).context("Invalid todo store snapshot")?;
+        for todo in &restored {
+            if !is_valid_todo_item(todo) {
+                anyhow::bail!(
+                    "Todo snapshot contains invalid item. Expected id/content/status/priority values."
+                );
+            }
+        }
+        self.items = restored;
+        Ok(())
+    }
 }
 
 pub(super) fn execute_create_todo_list(args: &Value, store: &mut TodoStore) -> Result<ToolResult> {

@@ -213,6 +213,22 @@ fn slash_command_parser_and_help_are_consistent() {
         Some(ParsedSlashCommand::SetModel(model)) if model == "grok-4-latest"
     ));
     assert!(matches!(
+        parse_slash_command("/save"),
+        Some(ParsedSlashCommand::Save(None))
+    ));
+    assert!(matches!(
+        parse_slash_command("/save sprint"),
+        Some(ParsedSlashCommand::Save(Some(name))) if name == "sprint"
+    ));
+    assert!(matches!(
+        parse_slash_command("/load sprint"),
+        Some(ParsedSlashCommand::Load(name)) if name == "sprint"
+    ));
+    assert!(matches!(
+        parse_slash_command("/sessions"),
+        Some(ParsedSlashCommand::Sessions)
+    ));
+    assert!(matches!(
         parse_slash_command("/commit-and-push"),
         Some(ParsedSlashCommand::CommitAndPush)
     ));
@@ -224,6 +240,12 @@ fn slash_command_parser_and_help_are_consistent() {
     assert!(built_in.contains("/clear"));
     assert!(built_in.contains("/models"));
     assert!(built_in.contains("/exit"));
+
+    let mut sessions = String::new();
+    append_help_section(&mut sessions, "Session Commands", CommandGroup::Session);
+    assert!(sessions.contains("/save"));
+    assert!(sessions.contains("/load <name>"));
+    assert!(sessions.contains("/sessions"));
 
     let mut git = String::new();
     append_help_section(&mut git, "Git Commands", CommandGroup::Git);

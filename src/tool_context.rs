@@ -40,6 +40,23 @@ impl ToolContext {
     pub fn resolve_path(&self, path: &str) -> Result<PathBuf> {
         resolve_and_validate(self, path)
     }
+
+    pub(crate) fn relative_current_dir(&self) -> String {
+        match self.current_dir.strip_prefix(&self.project_root) {
+            Ok(relative) if !relative.as_os_str().is_empty() => relative.to_string_lossy().to_string(),
+            _ => ".".to_string(),
+        }
+    }
+
+    pub(crate) fn restore_relative_current_dir(&mut self, relative_path: &str) -> Result<()> {
+        let trimmed = relative_path.trim();
+        if trimmed.is_empty() || trimmed == "." {
+            self.current_dir = self.project_root.clone();
+            return Ok(());
+        }
+        self.set_current_dir(trimmed)?;
+        Ok(())
+    }
 }
 
 fn normalize_existing_dir(path: &Path) -> Result<PathBuf> {

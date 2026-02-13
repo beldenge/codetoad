@@ -9,10 +9,10 @@ Backlog for upcoming parity and platform enhancements.
   - UX target: similar to Codex/Claude-style CLI behavior, with visible attachment confirmation before submit.
   - Scope notes: include Windows, macOS, and Linux terminal behaviors.
 
-- [ ] Add session persistence for saving and resuming tool loops across runs
+- [x] Add session persistence for saving and resuming tool loops across runs
   - Goal: allow users to pause and resume coding sessions, preserving context and partial tool executions.
-  - UX target: simple commands like 'save' and 'load' with optional session names.
-  - Scope notes: store state in a local file (e.g., JSON) and handle recovery on startup.
+  - Implemented via slash commands: `/save`, `/save <name>`, `/load <name>`, `/sessions`.
+  - Scope notes: session files are stored in `.grok/sessions/*.json` and restore model, message history, session cwd, todo state, and auto-edit/confirmation flags.
 
 - [ ] Store API keys in secure OS keychain/credential store (cross-platform)
   - Goal: avoid plaintext-only API key storage by default.

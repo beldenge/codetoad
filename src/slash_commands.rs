@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CommandGroup {
     BuiltIn,
+    Session,
     Git,
 }
 
@@ -55,6 +56,36 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     ),
     SlashCommand::new("/exit", "Exit application", CommandGroup::BuiltIn, true),
     SlashCommand::new(
+        "/save",
+        "Save current session (auto name)",
+        CommandGroup::Session,
+        true,
+    ),
+    SlashCommand::new(
+        "/save <name>",
+        "Save session with explicit name",
+        CommandGroup::Session,
+        false,
+    ),
+    SlashCommand::new(
+        "/load",
+        "Load a saved session (requires name)",
+        CommandGroup::Session,
+        true,
+    ),
+    SlashCommand::new(
+        "/load <name>",
+        "Load a saved session by name",
+        CommandGroup::Session,
+        false,
+    ),
+    SlashCommand::new(
+        "/sessions",
+        "List saved sessions",
+        CommandGroup::Session,
+        true,
+    ),
+    SlashCommand::new(
         "/commit-and-push",
         "AI-generated commit and push",
         CommandGroup::Git,
@@ -67,6 +98,9 @@ pub enum ParsedSlashCommand {
     Clear,
     Models,
     SetModel(String),
+    Save(Option<String>),
+    Load(String),
+    Sessions,
     CommitAndPush,
     Exit,
 }
@@ -77,6 +111,9 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand> {
         "/help" => Some(ParsedSlashCommand::Help),
         "/clear" => Some(ParsedSlashCommand::Clear),
         "/models" => Some(ParsedSlashCommand::Models),
+        "/save" => Some(ParsedSlashCommand::Save(None)),
+        "/sessions" => Some(ParsedSlashCommand::Sessions),
+        "/load" => Some(ParsedSlashCommand::Load(String::new())),
         "/commit-and-push" => Some(ParsedSlashCommand::CommitAndPush),
         "/exit" => Some(ParsedSlashCommand::Exit),
         _ => {
@@ -84,6 +121,16 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand> {
                 && !model.is_empty()
             {
                 return Some(ParsedSlashCommand::SetModel(model.to_string()));
+            }
+            if let Some(name) = trimmed.strip_prefix("/save ").map(str::trim)
+                && !name.is_empty()
+            {
+                return Some(ParsedSlashCommand::Save(Some(name.to_string())));
+            }
+            if let Some(name) = trimmed.strip_prefix("/load ").map(str::trim)
+                && !name.is_empty()
+            {
+                return Some(ParsedSlashCommand::Load(name.to_string()));
             }
             None
         }
@@ -131,5 +178,25 @@ mod tests {
     #[test]
     fn ignores_unknown_slash_commands() {
         assert!(parse_slash_command("/not-real").is_none());
+    }
+
+    #[test]
+    fn parses_session_commands() {
+        assert!(matches!(
+            parse_slash_command("/save"),
+            Some(ParsedSlashCommand::Save(None))
+        ));
+        assert!(matches!(
+            parse_slash_command("/save my-session"),
+            Some(ParsedSlashCommand::Save(Some(name))) if name == "my-session"
+        ));
+        assert!(matches!(
+            parse_slash_command("/load resume-1"),
+            Some(ParsedSlashCommand::Load(name)) if name == "resume-1"
+        ));
+        assert!(matches!(
+            parse_slash_command("/sessions"),
+            Some(ParsedSlashCommand::Sessions)
+        ));
     }
 }
