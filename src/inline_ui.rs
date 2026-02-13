@@ -62,12 +62,27 @@ pub async fn run_inline(
     print_logo_and_tips();
     let mut history: Vec<String> = Vec::new();
     let mut auto_edit = false;
+    let mut synced_auto_edit = auto_edit;
+    let mut direct_bash_allow_session = false;
     let mut current_model = agent.lock().await.current_model().to_string();
 
     if let Some(initial) = initial_message {
         history.push(initial.clone());
-        agent.lock().await.set_auto_edit_enabled(auto_edit);
-        handle_input(&initial, agent.clone(), settings.clone()).await?;
+        if auto_edit != synced_auto_edit {
+            agent.lock().await.set_auto_edit_enabled(auto_edit);
+            if !auto_edit {
+                direct_bash_allow_session = false;
+            }
+            synced_auto_edit = auto_edit;
+        }
+        handle_input(
+            &initial,
+            auto_edit,
+            &mut direct_bash_allow_session,
+            agent.clone(),
+            settings.clone(),
+        )
+        .await?;
         current_model = agent.lock().await.current_model().to_string();
     }
 
@@ -83,8 +98,21 @@ pub async fn run_inline(
             break;
         }
         history.push(input.clone());
-        agent.lock().await.set_auto_edit_enabled(auto_edit);
-        handle_input(&input, agent.clone(), settings.clone()).await?;
+        if auto_edit != synced_auto_edit {
+            agent.lock().await.set_auto_edit_enabled(auto_edit);
+            if !auto_edit {
+                direct_bash_allow_session = false;
+            }
+            synced_auto_edit = auto_edit;
+        }
+        handle_input(
+            &input,
+            auto_edit,
+            &mut direct_bash_allow_session,
+            agent.clone(),
+            settings.clone(),
+        )
+        .await?;
         current_model = agent.lock().await.current_model().to_string();
     }
 
@@ -99,6 +127,8 @@ fn recover_terminal_state() {
 
 async fn handle_input(
     input: &str,
+    auto_edit_enabled: bool,
+    direct_bash_allow_session: &mut bool,
     agent: Arc<Mutex<Agent>>,
     settings: Arc<Mutex<SettingsManager>>,
 ) -> Result<()> {
@@ -149,15 +179,31 @@ async fn handle_input(
     }
 
     if is_direct_command(input) {
+        let tool_call = ToolCallSummary {
+            id: "bash_inline_direct".to_string(),
+            name: "bash".to_string(),
+            arguments: format!(r#"{{"command":"{}"}}"#, input.replace('"', "\\\"")),
+        };
+
+        if !auto_edit_enabled && !*direct_bash_allow_session {
+            match prompt_tool_confirmation(&tool_call, ConfirmationOperation::Bash)? {
+                ConfirmationDecision::Approve {
+                    remember_for_session,
+                    ..
+                } => {
+                    if remember_for_session {
+                        *direct_bash_allow_session = true;
+                    }
+                }
+                ConfirmationDecision::Reject { .. } => {
+                    print_tool_result(tool_call, ToolResult::err("Operation cancelled by user"));
+                    return Ok(());
+                }
+            }
+        }
+
         let result = execute_bash_command(input).await?;
-        print_tool_result(
-            ToolCallSummary {
-                id: "bash_inline".to_string(),
-                name: "bash".to_string(),
-                arguments: format!(r#"{{"command":"{}"}}"#, input.replace('"', "\\\"")),
-            },
-            result,
-        );
+        print_tool_result(tool_call, result);
         return Ok(());
     }
 

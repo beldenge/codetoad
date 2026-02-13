@@ -28,7 +28,7 @@ Implemented now:
 - Inline prompt supports slash-command suggestions with descriptions while typing `/...`
 - `Up/Down` navigates command suggestions and `Tab/Enter` accepts the selected command
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)
-- File-edit and bash tool calls require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
+- File-edit and bash operations (including direct commands) require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
 - Auto-edit mode bypasses confirmations for the current session
 - Inline assistant output applies markdown-aware rendering (headings, lists, inline code, fenced code blocks) with lightweight syntax coloring
 - Inline tool execution shows lifecycle timeline entries with per-tool durations and end-of-response tool summary
