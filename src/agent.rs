@@ -653,3 +653,50 @@ fn estimate_chars_tokens(char_count: usize) -> usize {
         char_count.div_ceil(4)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{append_with_overlap, merge_stream_field, merge_stream_text};
+
+    #[test]
+    fn append_with_overlap_handles_suffix_overlap() {
+        let mut target = "abcdef".to_string();
+        let appended = append_with_overlap(&mut target, "defghi");
+        assert_eq!(appended, "ghi");
+        assert_eq!(target, "abcdefghi");
+    }
+
+    #[test]
+    fn merge_stream_text_ignores_duplicate_full_snapshot() {
+        let mut target = String::new();
+        assert_eq!(merge_stream_text(&mut target, "hello"), Some("hello".to_string()));
+        assert_eq!(merge_stream_text(&mut target, "hello"), None);
+        assert_eq!(target, "hello");
+    }
+
+    #[test]
+    fn merge_stream_text_emits_only_new_suffix_for_snapshots() {
+        let mut target = String::new();
+        assert_eq!(merge_stream_text(&mut target, "hello"), Some("hello".to_string()));
+        assert_eq!(
+            merge_stream_text(&mut target, "hello world"),
+            Some(" world".to_string())
+        );
+        assert_eq!(target, "hello world");
+    }
+
+    #[test]
+    fn merge_stream_field_handles_replayed_and_incremental_values() {
+        let mut target = String::new();
+        merge_stream_field(&mut target, "str_replace_editor");
+        assert_eq!(target, "str_replace_editor");
+
+        // Replayed full field should not duplicate content.
+        merge_stream_field(&mut target, "str_replace_editor");
+        assert_eq!(target, "str_replace_editor");
+
+        // Incremental suffix appends correctly.
+        merge_stream_field(&mut target, "_v2");
+        assert_eq!(target, "str_replace_editor_v2");
+    }
+}
