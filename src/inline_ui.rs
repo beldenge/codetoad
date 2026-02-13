@@ -660,6 +660,9 @@ fn pretty_tool_name(name: &str) -> &str {
         "str_replace_editor" => "Update",
         "create_file" => "Create",
         "bash" => "Bash",
+        "search" => "Search",
+        "create_todo_list" => "TodoCreate",
+        "update_todo_list" => "TodoUpdate",
         _ => "Tool",
     }
 }
@@ -670,6 +673,8 @@ fn tool_target(tool: &ToolCallSummary) -> String {
             .get("path")
             .and_then(serde_json::Value::as_str)
             .or_else(|| value.get("command").and_then(serde_json::Value::as_str))
+            .or_else(|| value.get("query").and_then(serde_json::Value::as_str))
+            .or_else(|| value.get("id").and_then(serde_json::Value::as_str))
             .unwrap_or("")
             .to_string();
     }

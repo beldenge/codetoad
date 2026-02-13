@@ -1,8 +1,12 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use serde_json::Value;
 use similar::TextDiff;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tokio::process::Command;
 
 #[derive(Debug, Clone)]
@@ -42,12 +46,77 @@ pub fn tool_result_from_error(err: anyhow::Error) -> ToolResult {
     ToolResult::err(format!("{err:#}"))
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct SearchOptions {
+    query: String,
+    #[serde(default)]
+    search_type: Option<String>,
+    #[serde(default)]
+    include_pattern: Option<String>,
+    #[serde(default)]
+    exclude_pattern: Option<String>,
+    #[serde(default)]
+    case_sensitive: Option<bool>,
+    #[serde(default)]
+    whole_word: Option<bool>,
+    #[serde(default)]
+    regex: Option<bool>,
+    #[serde(default)]
+    max_results: Option<usize>,
+    #[serde(default)]
+    file_types: Option<Vec<String>>,
+    #[serde(default)]
+    include_hidden: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct SearchTextResult {
+    file: String,
+    line: usize,
+    column: usize,
+    text: String,
+}
+
+#[derive(Debug, Clone)]
+struct FileSearchResult {
+    path: String,
+    score: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TodoItem {
+    id: String,
+    content: String,
+    status: String,
+    priority: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TodoUpdate {
+    id: String,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    priority: Option<String>,
+}
+
+static TODO_ITEMS: OnceLock<Mutex<Vec<TodoItem>>> = OnceLock::new();
+
+fn todo_items() -> &'static Mutex<Vec<TodoItem>> {
+    TODO_ITEMS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
 pub async fn execute_tool(name: &str, args: &Value) -> ToolResult {
     let result = match name {
         "view_file" => execute_view_file(args),
         "create_file" => execute_create_file(args),
         "str_replace_editor" => execute_str_replace_editor(args),
         "bash" => execute_bash_tool(args).await,
+        "search" => execute_search(args).await,
+        "create_todo_list" => execute_create_todo_list(args),
+        "update_todo_list" => execute_update_todo_list(args),
         _ => Ok(ToolResult::err(format!("Unknown tool: {name}"))),
     };
 
@@ -118,7 +187,7 @@ fn execute_view_file(args: &Value) -> Result<ToolResult> {
         )));
     }
 
-    let limit = 200usize;
+    let limit = 10usize;
     let display = lines
         .iter()
         .take(limit)
@@ -210,6 +279,415 @@ fn execute_str_replace_editor(args: &Value) -> Result<ToolResult> {
         .to_string();
 
     Ok(ToolResult::ok(format!("Updated {path}\n{diff}")))
+}
+
+async fn execute_search(args: &Value) -> Result<ToolResult> {
+    let options: SearchOptions =
+        serde_json::from_value(args.clone()).context("Invalid search arguments")?;
+    let query = options.query.trim();
+    if query.is_empty() {
+        return Ok(ToolResult::err("Missing or empty 'query' argument"));
+    }
+
+    let search_type = options
+        .search_type
+        .as_deref()
+        .unwrap_or("both")
+        .to_ascii_lowercase();
+    if !matches!(search_type.as_str(), "text" | "files" | "both") {
+        return Ok(ToolResult::err(
+            "Invalid search_type. Expected one of: text, files, both",
+        ));
+    }
+
+    let max_results = options.max_results.unwrap_or(50).clamp(1, 200);
+    let mut text_results = Vec::new();
+    let mut file_results = Vec::new();
+
+    if matches!(search_type.as_str(), "text" | "both") {
+        text_results = search_text(query, &options, max_results).await?;
+    }
+    if matches!(search_type.as_str(), "files" | "both") {
+        file_results = search_files(query, &options, max_results).await?;
+    }
+
+    Ok(ToolResult::ok(format_search_results(
+        query,
+        &text_results,
+        &file_results,
+    )))
+}
+
+async fn search_text(
+    query: &str,
+    options: &SearchOptions,
+    max_results: usize,
+) -> Result<Vec<SearchTextResult>> {
+    let mut cmd = Command::new("rg");
+    cmd.arg("--json")
+        .arg("--with-filename")
+        .arg("--line-number")
+        .arg("--column")
+        .arg("--no-heading")
+        .arg("--color=never")
+        .arg("--max-count")
+        .arg(max_results.to_string())
+        .arg("--no-require-git")
+        .arg("--follow")
+        .arg("--glob")
+        .arg("!.git/**")
+        .arg("--glob")
+        .arg("!node_modules/**")
+        .arg("--glob")
+        .arg("!.DS_Store")
+        .arg("--glob")
+        .arg("!*.log");
+
+    if !options.case_sensitive.unwrap_or(false) {
+        cmd.arg("--ignore-case");
+    }
+    if options.whole_word.unwrap_or(false) {
+        cmd.arg("--word-regexp");
+    }
+    if !options.regex.unwrap_or(false) {
+        cmd.arg("--fixed-strings");
+    }
+    if options.include_hidden.unwrap_or(false) {
+        cmd.arg("--hidden");
+    }
+    if let Some(include_pattern) = options.include_pattern.as_deref() {
+        cmd.arg("--glob").arg(include_pattern);
+    }
+    if let Some(exclude_pattern) = options.exclude_pattern.as_deref() {
+        cmd.arg("--glob").arg(format!("!{exclude_pattern}"));
+    }
+    if let Some(file_types) = &options.file_types {
+        for file_type in file_types {
+            let trimmed = file_type.trim().trim_start_matches('.');
+            if !trimmed.is_empty() {
+                cmd.arg("--glob").arg(format!("*.{trimmed}"));
+            }
+        }
+    }
+
+    cmd.arg(query).arg(".");
+
+    let output = cmd
+        .output()
+        .await
+        .with_context(|| format!("Failed running search command for query '{query}'"))?;
+    let status_code = output.status.code().unwrap_or_default();
+    if !output.status.success() && status_code != 1 {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow::anyhow!("Search command failed: {stderr}"));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut results = Vec::new();
+    for line in stdout.lines() {
+        let Ok(parsed) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if parsed.get("type").and_then(Value::as_str) != Some("match") {
+            continue;
+        }
+
+        let data = parsed.get("data").unwrap_or(&Value::Null);
+        let file = data
+            .get("path")
+            .and_then(|v| v.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if file.is_empty() {
+            continue;
+        }
+
+        let line_number = data
+            .get("line_number")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize)
+            .unwrap_or(0);
+        let column = data
+            .get("submatches")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(|item| item.get("start"))
+            .and_then(Value::as_u64)
+            .map(|v| v as usize)
+            .unwrap_or(0);
+        let text = data
+            .get("lines")
+            .and_then(|v| v.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        results.push(SearchTextResult {
+            file,
+            line: line_number,
+            column,
+            text,
+        });
+
+        if results.len() >= max_results {
+            break;
+        }
+    }
+
+    Ok(results)
+}
+
+async fn search_files(
+    query: &str,
+    options: &SearchOptions,
+    max_results: usize,
+) -> Result<Vec<FileSearchResult>> {
+    let mut cmd = Command::new("rg");
+    cmd.arg("--files")
+        .arg("--no-require-git")
+        .arg("--follow")
+        .arg("--glob")
+        .arg("!.git/**")
+        .arg("--glob")
+        .arg("!node_modules/**")
+        .arg("--glob")
+        .arg("!.DS_Store")
+        .arg("--glob")
+        .arg("!*.log");
+
+    if options.include_hidden.unwrap_or(false) {
+        cmd.arg("--hidden");
+    }
+    if let Some(include_pattern) = options.include_pattern.as_deref() {
+        cmd.arg("--glob").arg(include_pattern);
+    }
+    if let Some(exclude_pattern) = options.exclude_pattern.as_deref() {
+        cmd.arg("--glob").arg(format!("!{exclude_pattern}"));
+    }
+    if let Some(file_types) = &options.file_types {
+        for file_type in file_types {
+            let trimmed = file_type.trim().trim_start_matches('.');
+            if !trimmed.is_empty() {
+                cmd.arg("--glob").arg(format!("*.{trimmed}"));
+            }
+        }
+    }
+
+    cmd.arg(".");
+
+    let output = cmd.output().await.context("Failed running file search command")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow::anyhow!("File search command failed: {stderr}"));
+    }
+
+    let query_lower = query.to_ascii_lowercase();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut results = Vec::new();
+    for line in stdout.lines() {
+        let raw = line.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let path = normalize_file_path(raw);
+        let file_name = PathBuf::from(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        let score = calculate_file_score(&file_name, &path, &query_lower);
+        if score > 0 {
+            results.push(FileSearchResult { path, score });
+        }
+    }
+
+    results.sort_by(|a, b| match b.score.cmp(&a.score) {
+        Ordering::Equal => a.path.cmp(&b.path),
+        ordering => ordering,
+    });
+    results.truncate(max_results);
+    Ok(results)
+}
+
+fn normalize_file_path(path: &str) -> String {
+    path.strip_prefix("./")
+        .map(|trimmed| trimmed.to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
+fn calculate_file_score(file_name: &str, file_path: &str, pattern: &str) -> i32 {
+    let lower_name = file_name.to_ascii_lowercase();
+    let lower_path = file_path.to_ascii_lowercase();
+
+    if lower_name == pattern {
+        return 100;
+    }
+    if lower_name.contains(pattern) {
+        return 80;
+    }
+    if lower_path.contains(pattern) {
+        return 60;
+    }
+
+    let mut pattern_index = 0usize;
+    let pattern_chars = pattern.chars().collect::<Vec<_>>();
+    for ch in lower_name.chars() {
+        if pattern_index < pattern_chars.len() && ch == pattern_chars[pattern_index] {
+            pattern_index += 1;
+        }
+    }
+
+    if pattern_index == pattern_chars.len() {
+        let length_penalty = lower_name.chars().count() as i32 - pattern_chars.len() as i32;
+        return (40 - length_penalty).max(10);
+    }
+
+    0
+}
+
+fn format_search_results(
+    query: &str,
+    text_results: &[SearchTextResult],
+    file_results: &[FileSearchResult],
+) -> String {
+    if text_results.is_empty() && file_results.is_empty() {
+        return format!("No results found for \"{query}\"");
+    }
+
+    let mut match_counts: HashMap<String, usize> = HashMap::new();
+    for result in text_results {
+        let _ = (result.line, result.column, &result.text);
+        *match_counts.entry(result.file.clone()).or_insert(0) += 1;
+    }
+
+    let mut ordered_files = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for result in text_results {
+        if seen.insert(result.file.clone()) {
+            ordered_files.push(result.file.clone());
+        }
+    }
+    for result in file_results {
+        if seen.insert(result.path.clone()) {
+            ordered_files.push(result.path.clone());
+        }
+    }
+
+    let display_limit = 8usize;
+    let mut lines = vec![format!("Search results for \"{query}\":")];
+    for file in ordered_files.iter().take(display_limit) {
+        let match_count = match_counts.get(file).copied().unwrap_or(0);
+        if match_count > 0 {
+            lines.push(format!("  {file} ({match_count} matches)"));
+        } else {
+            lines.push(format!("  {file}"));
+        }
+    }
+    if ordered_files.len() > display_limit {
+        lines.push(format!("  ... +{} more", ordered_files.len() - display_limit));
+    }
+
+    lines.join("\n")
+}
+
+fn execute_create_todo_list(args: &Value) -> Result<ToolResult> {
+    let todos_value = args
+        .get("todos")
+        .cloned()
+        .context("Missing 'todos' argument")?;
+    let todos: Vec<TodoItem> =
+        serde_json::from_value(todos_value).context("Invalid 'todos' argument")?;
+
+    for todo in &todos {
+        if !is_valid_todo_item(todo) {
+            return Ok(ToolResult::err(
+                "Each todo must include id, content, status(pending|in_progress|completed), and priority(high|medium|low)",
+            ));
+        }
+    }
+
+    let mut store = todo_items()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Todo list storage is unavailable"))?;
+    *store = todos.clone();
+    Ok(ToolResult::ok(format_todo_list(&store)))
+}
+
+fn execute_update_todo_list(args: &Value) -> Result<ToolResult> {
+    let updates_value = args
+        .get("updates")
+        .cloned()
+        .context("Missing 'updates' argument")?;
+    let updates: Vec<TodoUpdate> =
+        serde_json::from_value(updates_value).context("Invalid 'updates' argument")?;
+
+    let mut store = todo_items()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Todo list storage is unavailable"))?;
+    for update in updates {
+        let Some(todo) = store.iter_mut().find(|item| item.id == update.id) else {
+            return Ok(ToolResult::err(format!(
+                "Todo with id '{}' not found",
+                update.id
+            )));
+        };
+
+        if let Some(status) = update.status {
+            if !is_valid_status(&status) {
+                return Ok(ToolResult::err(format!(
+                    "Invalid status: {status}. Must be pending, in_progress, or completed"
+                )));
+            }
+            todo.status = status;
+        }
+        if let Some(content) = update.content {
+            todo.content = content;
+        }
+        if let Some(priority) = update.priority {
+            if !is_valid_priority(&priority) {
+                return Ok(ToolResult::err(format!(
+                    "Invalid priority: {priority}. Must be high, medium, or low"
+                )));
+            }
+            todo.priority = priority;
+        }
+    }
+
+    Ok(ToolResult::ok(format_todo_list(&store)))
+}
+
+fn is_valid_todo_item(item: &TodoItem) -> bool {
+    !item.id.trim().is_empty()
+        && !item.content.trim().is_empty()
+        && is_valid_status(&item.status)
+        && is_valid_priority(&item.priority)
+}
+
+fn is_valid_status(status: &str) -> bool {
+    matches!(status, "pending" | "in_progress" | "completed")
+}
+
+fn is_valid_priority(priority: &str) -> bool {
+    matches!(priority, "high" | "medium" | "low")
+}
+
+fn format_todo_list(todos: &[TodoItem]) -> String {
+    if todos.is_empty() {
+        return "No todos created yet".to_string();
+    }
+
+    let mut output = String::new();
+    for (index, todo) in todos.iter().enumerate() {
+        let marker = match todo.status.as_str() {
+            "completed" => "●",
+            "in_progress" => "◐",
+            _ => "○",
+        };
+        let indent = if index == 0 { "" } else { "  " };
+        output.push_str(&format!("{indent}{marker} {}\n", todo.content));
+    }
+    output.trim_end().to_string()
 }
 
 async fn execute_bash_tool(args: &Value) -> Result<ToolResult> {

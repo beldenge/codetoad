@@ -4,7 +4,7 @@
 
 It provides:
 - xAI Responses API integration (non-deprecated path) with compatibility fallback for chat-completions-style providers
-- ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`)
+- ReAct-style tool loop (`view_file`, `create_file`, `str_replace_editor`, `bash`, `search`, `create_todo_list`, `update_todo_list`)
 - Streaming terminal-native UI built with `crossterm`
 - Slash commands compatible with the TypeScript app:
   - `/help`
@@ -47,6 +47,7 @@ Implemented now:
   - `.grok/GROK.md` (project)
   - `~/.grok/GROK.md` (global fallback)
 - Direct shell command passthrough in UI (`ls`, `pwd`, `cd`, `cat`, `mkdir`, `touch`, `echo`, `grep`, `find`, `cp`, `mv`, `rm`)
+- `view_file` default preview is aligned to `grok-cli` (10 lines)
 
 Not yet implemented:
 - MCP server integration

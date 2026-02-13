@@ -598,12 +598,16 @@ You can use these tools:
 - create_file: Create a new file.
 - str_replace_editor: Replace text in an existing file.
 - bash: Run shell commands.
+- search: Find text and files.
+- create_todo_list: Create a todo checklist.
+- update_todo_list: Update todo checklist items.
 
 Important behavior:
 - Use view_file before editing when practical.
 - Use str_replace_editor for existing files instead of create_file.
 - Keep responses concise and directly tied to the task.
 - Use bash for file discovery and command execution when useful.
+- Use search for broad text or file discovery across the workspace.
 
 Current working directory: {}",
         cwd.display()
@@ -671,6 +675,101 @@ fn default_tools() -> Vec<ChatTool> {
                         "command": { "type": "string" }
                     },
                     "required": ["command"]
+                }),
+            },
+        },
+        ChatTool {
+            r#type: "function".to_string(),
+            function: ChatToolFunction {
+                name: "search".to_string(),
+                description: "Unified search for text content and files".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "Text query or file name pattern" },
+                        "search_type": {
+                            "type": "string",
+                            "enum": ["text", "files", "both"],
+                            "description": "Search mode (default: both)"
+                        },
+                        "include_pattern": { "type": "string", "description": "Optional include glob pattern" },
+                        "exclude_pattern": { "type": "string", "description": "Optional exclude glob pattern" },
+                        "case_sensitive": { "type": "boolean", "description": "Enable case sensitive text matching" },
+                        "whole_word": { "type": "boolean", "description": "Match whole words only for text search" },
+                        "regex": { "type": "boolean", "description": "Treat query as regex for text search" },
+                        "max_results": { "type": "number", "description": "Maximum number of results" },
+                        "file_types": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional file type filters (e.g. ['rs', 'ts'])"
+                        },
+                        "include_hidden": { "type": "boolean", "description": "Include hidden files" }
+                    },
+                    "required": ["query"]
+                }),
+            },
+        },
+        ChatTool {
+            r#type: "function".to_string(),
+            function: ChatToolFunction {
+                name: "create_todo_list".to_string(),
+                description: "Create a new todo list for planning and tracking tasks".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "todos": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "string" },
+                                    "content": { "type": "string" },
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "completed"]
+                                    },
+                                    "priority": {
+                                        "type": "string",
+                                        "enum": ["high", "medium", "low"]
+                                    }
+                                },
+                                "required": ["id", "content", "status", "priority"]
+                            }
+                        }
+                    },
+                    "required": ["todos"]
+                }),
+            },
+        },
+        ChatTool {
+            r#type: "function".to_string(),
+            function: ChatToolFunction {
+                name: "update_todo_list".to_string(),
+                description: "Update existing todo items".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "updates": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": { "type": "string" },
+                                    "status": {
+                                        "type": "string",
+                                        "enum": ["pending", "in_progress", "completed"]
+                                    },
+                                    "content": { "type": "string" },
+                                    "priority": {
+                                        "type": "string",
+                                        "enum": ["high", "medium", "low"]
+                                    }
+                                },
+                                "required": ["id"]
+                            }
+                        }
+                    },
+                    "required": ["updates"]
                 }),
             },
         },
