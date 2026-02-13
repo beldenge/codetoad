@@ -596,32 +596,11 @@ fn convert_responses_body_to_chat_completion(body: &str) -> Result<ChatCompletio
                 }
             }
             "function_call" => {
-                let name = item
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .or_else(|| {
-                        item.get("function")
-                            .and_then(|function| function.get("name"))
-                            .and_then(Value::as_str)
-                    })
-                    .unwrap_or_default()
-                    .to_string();
-                let arguments = item
-                    .get("arguments")
-                    .and_then(Value::as_str)
-                    .or_else(|| {
-                        item.get("function")
-                            .and_then(|function| function.get("arguments"))
-                            .and_then(Value::as_str)
-                    })
-                    .unwrap_or("{}")
-                    .to_string();
-                let id = item
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .or_else(|| item.get("call_id").and_then(Value::as_str))
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("call_{index}"));
+                let Some(name) = function_call_name(item) else {
+                    continue;
+                };
+                let arguments = function_call_arguments(item);
+                let id = function_call_id(item, &format!("call_{index}"));
 
                 if !name.trim().is_empty() {
                     tool_calls.push(ChatToolCall {
@@ -672,40 +651,15 @@ fn parse_tool_call_event(data: &str) -> Result<Option<ChatCompletionStreamChunk>
         return Ok(None);
     }
 
-    let name = item
-        .get("name")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            item.get("function")
-                .and_then(|function| function.get("name"))
-                .and_then(Value::as_str)
-        })
-        .unwrap_or_default()
-        .to_string();
-    let arguments = item
-        .get("arguments")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            item.get("function")
-                .and_then(|function| function.get("arguments"))
-                .and_then(Value::as_str)
-        })
-        .unwrap_or("{}")
-        .to_string();
-    let id = item
-        .get("id")
-        .and_then(Value::as_str)
-        .or_else(|| item.get("call_id").and_then(Value::as_str))
-        .unwrap_or("call_0")
-        .to_string();
+    let Some(name) = function_call_name(&item) else {
+        return Ok(None);
+    };
+    let arguments = function_call_arguments(&item);
+    let id = function_call_id(&item, "call_0");
     let index = payload
         .get("output_index")
         .and_then(Value::as_u64)
         .unwrap_or(0) as usize;
-
-    if name.trim().is_empty() {
-        return Ok(None);
-    }
 
     Ok(Some(ChatCompletionStreamChunk {
         choices: vec![ChatCompletionStreamChoice {
@@ -734,6 +688,39 @@ fn make_content_chunk(delta: &str) -> ChatCompletionStreamChunk {
             },
         }],
     }
+}
+
+fn function_call_name(item: &Value) -> Option<String> {
+    item.get("name")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            item.get("function")
+                .and_then(|function| function.get("name"))
+                .and_then(Value::as_str)
+        })
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| name.to_string())
+}
+
+fn function_call_arguments(item: &Value) -> String {
+    item.get("arguments")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            item.get("function")
+                .and_then(|function| function.get("arguments"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("{}")
+        .to_string()
+}
+
+fn function_call_id(item: &Value, fallback: &str) -> String {
+    item.get("id")
+        .and_then(Value::as_str)
+        .or_else(|| item.get("call_id").and_then(Value::as_str))
+        .unwrap_or(fallback)
+        .to_string()
 }
 
 #[derive(Debug, Clone, Serialize)]
