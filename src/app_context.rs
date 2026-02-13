@@ -1,7 +1,10 @@
 use crate::agent::Agent;
+use crate::session_store::save_session;
 use crate::settings::SettingsManager;
+use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -15,6 +18,7 @@ pub struct AppContext {
     agent: Arc<Mutex<Agent>>,
     settings: Arc<Mutex<SettingsManager>>,
     runtime_flags: Arc<Mutex<RuntimeFlags>>,
+    active_session_name: Arc<Mutex<Option<String>>>,
 }
 
 impl AppContext {
@@ -24,6 +28,7 @@ impl AppContext {
             agent: Arc::new(Mutex::new(agent)),
             settings: Arc::new(Mutex::new(settings)),
             runtime_flags: Arc::new(Mutex::new(RuntimeFlags::default())),
+            active_session_name: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -56,4 +61,34 @@ impl AppContext {
         let mut flags = self.runtime_flags.lock().await;
         flags.auto_edit = enabled;
     }
+
+    pub async fn active_session_name(&self) -> Option<String> {
+        self.active_session_name.lock().await.clone()
+    }
+
+    pub async fn set_active_session_name(&self, name: String) {
+        let mut guard = self.active_session_name.lock().await;
+        *guard = Some(name);
+    }
+
+    pub async fn autosave_session(&self) -> Result<String> {
+        let snapshot = self.agent.lock().await.session_snapshot()?;
+        let session_name = {
+            let mut guard = self.active_session_name.lock().await;
+            if guard.is_none() {
+                *guard = Some(default_session_name());
+            }
+            guard.clone().unwrap_or_default()
+        };
+        let saved = save_session(&self.cwd, Some(&session_name), snapshot)?;
+        Ok(saved)
+    }
+}
+
+fn default_session_name() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    format!("auto-{millis}")
 }

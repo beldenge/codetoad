@@ -244,12 +244,28 @@ pub fn read_prompt_line(
 }
 
 pub fn select_model_inline(available: &[String], current: &str) -> Result<Option<String>> {
+    select_option_inline(
+        "Select model",
+        available,
+        Some(current),
+        "No models available.",
+    )
+}
+
+pub fn select_option_inline(
+    title: &str,
+    available: &[String],
+    current: Option<&str>,
+    empty_message: &str,
+) -> Result<Option<String>> {
     if available.is_empty() {
-        println!("No models available.");
+        println!("{empty_message}");
         return Ok(None);
     }
 
-    let mut selected = available.iter().position(|m| m == current).unwrap_or(0);
+    let mut selected = current
+        .and_then(|current| available.iter().position(|value| value == current))
+        .unwrap_or(0);
     enable_raw_mode()?;
     let mut rendered_lines = 0usize;
 
@@ -267,10 +283,14 @@ pub fn select_model_inline(available: &[String], current: &str) -> Result<Option
             execute!(io::stdout(), MoveUp(rendered_lines as u16), MoveToColumn(0))?;
         }
 
-        println!("Select model (↑/↓ navigate, Enter/Tab confirm, Esc cancel):");
+        println!("{title} (↑/↓ navigate, Enter/Tab confirm, Esc cancel):");
         for (idx, model) in available.iter().enumerate() {
             let marker = if idx == selected { ">" } else { " " };
-            let current_suffix = if model == current { " (current)" } else { "" };
+            let current_suffix = if Some(model.as_str()) == current {
+                " (current)"
+            } else {
+                ""
+            };
             println!("{marker} {model}{current_suffix}");
         }
         io::stdout().flush()?;

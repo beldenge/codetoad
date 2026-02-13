@@ -11,7 +11,7 @@ Backlog for upcoming parity and platform enhancements.
 
 - [x] Add session persistence for saving and resuming tool loops across runs
   - Goal: allow users to pause and resume coding sessions, preserving context and partial tool executions.
-  - Implemented via slash commands: `/save`, `/save <name>`, `/load <name>`, `/sessions`.
+  - Implemented via automatic session saves plus `/resume` interactive picker.
   - Scope notes: session files are stored in `.grok/sessions/*.json` and restore model, message history, session cwd, todo state, and auto-edit/confirmation flags.
 
 - [ ] Store API keys in secure OS keychain/credential store (cross-platform)

@@ -62,7 +62,7 @@ pub(crate) fn load_session(cwd: &Path, requested_name: &str) -> Result<AgentSess
 
 pub(crate) fn list_sessions(cwd: &Path) -> Result<Vec<String>> {
     let sessions_dir = ensure_sessions_dir(cwd)?;
-    let mut names = Vec::new();
+    let mut entries: Vec<(String, std::time::SystemTime)> = Vec::new();
     for entry in std::fs::read_dir(&sessions_dir)
         .with_context(|| format!("Failed listing {}", sessions_dir.display()))?
     {
@@ -80,9 +80,15 @@ pub(crate) fn list_sessions(cwd: &Path) -> Result<Vec<String>> {
         let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
             continue;
         };
-        names.push(stem.to_string());
+        let modified = entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        entries.push((stem.to_string(), modified));
     }
-    names.sort();
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let names = entries.into_iter().map(|(name, _)| name).collect();
     Ok(names)
 }
 

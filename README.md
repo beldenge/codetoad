@@ -13,10 +13,7 @@ It provides:
   - `/clear`
   - `/models`
   - `/models <name>`
-  - `/save`
-  - `/save <name>`
-  - `/load <name>`
-  - `/sessions`
+  - `/resume`
   - `/commit-and-push`
   - `/exit`
 - Headless prompt mode and `git commit-and-push` subcommand
@@ -35,11 +32,9 @@ Implemented now:
 - Inline prompt supports slash-command suggestions with descriptions while typing `/...`
 - Slash suggestions render as a vertical list under the prompt (no horizontal scrolling)
 - `Up/Down` navigates command suggestions, `Tab` autocompletes, and `Enter` runs exact slash commands
-- Session persistence commands:
-  - `/save` (auto-generated session name)
-  - `/save <name>` (explicit name)
-  - `/load <name>` (restore model/history/cwd/todo state)
-  - `/sessions` (list saved sessions in `.grok/sessions`)
+- Sessions are auto-saved to `.grok/sessions/*.json` during interactive usage
+- `/resume` opens an inline picker (same navigation style as model picker) to reload a saved session
+- Resume restores model/history/cwd/todo state and auto-edit/confirmation session flags
 - `/models` opens an interactive model picker (arrow keys + Enter/Tab)
 - File-edit and bash operations (including direct commands) require confirmation (`y` once, `a` remember for session, `n`/`Esc` reject)
 - File tools and shell working-directory changes are constrained to the active project root (canonical path boundary checks with symlink-aware ancestor resolution)

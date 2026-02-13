@@ -107,10 +107,7 @@ This repository is a Rust implementation of `grok-cli` behavior, focused on:
 - `/clear`
 - `/models`
 - `/models <name>`
-- `/save`
-- `/save <name>`
-- `/load <name>`
-- `/sessions`
+- `/resume`
 - `/commit-and-push`
 - `/exit`
 

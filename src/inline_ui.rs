@@ -11,8 +11,8 @@ use crate::inline_feedback::{
 use crate::inline_markdown::{
     MarkdownStreamRenderer, flush_markdown_pending, stream_markdown_chunk,
 };
-use crate::inline_prompt::{read_prompt_line, select_model_inline};
-use crate::session_store::{list_sessions, load_session, save_session};
+use crate::inline_prompt::{read_prompt_line, select_model_inline, select_option_inline};
+use crate::session_store::{list_sessions, load_session};
 use crate::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
@@ -57,6 +57,7 @@ pub async fn run_inline(
     print_logo_and_tips();
     println!("{}", format!("cwd: {}", app.cwd().display()).dark_grey());
     println!();
+    let _ = app.autosave_session().await?;
     let mut history: Vec<String> = Vec::new();
     let mut auto_edit = app.auto_edit_enabled().await;
     let mut synced_auto_edit = auto_edit;
@@ -74,6 +75,7 @@ pub async fn run_inline(
             app.clone(),
         )
         .await?;
+        let _ = app.autosave_session().await?;
         current_model = app.agent().lock().await.current_model().to_string();
     }
 
@@ -99,6 +101,7 @@ pub async fn run_inline(
             app.clone(),
         )
         .await?;
+        let _ = app.autosave_session().await?;
         current_model = app.agent().lock().await.current_model().to_string();
     }
 
@@ -164,40 +167,25 @@ async fn handle_slash_command(
                 println!("Available: {}", available.join(", "));
             }
         }
-        ParsedSlashCommand::Save(name) => {
-            let snapshot = app.agent().lock().await.session_snapshot()?;
-            let saved_name = save_session(app.cwd(), name.as_deref(), snapshot)?;
-            println!("Saved session: {saved_name}");
-        }
-        ParsedSlashCommand::Load(name) => {
-            if name.trim().is_empty() {
-                println!("Usage: /load <name>");
-                let sessions = list_sessions(app.cwd())?;
-                if sessions.is_empty() {
-                    println!("No saved sessions.");
-                } else {
-                    println!("Saved sessions:");
-                    for session in sessions {
-                        println!("  {session}");
-                    }
-                }
+        ParsedSlashCommand::Resume => {
+            let sessions = list_sessions(app.cwd())?;
+            let current = app.active_session_name().await;
+            let Some(selected) = select_option_inline(
+                "Resume session",
+                &sessions,
+                current.as_deref(),
+                "No saved sessions.",
+            )?
+            else {
+                println!("Resume cancelled.");
                 return Ok(());
-            }
+            };
+            let name = selected;
             let snapshot = load_session(app.cwd(), &name)?;
             app.agent().lock().await.restore_session_snapshot(snapshot)?;
             app.sync_auto_edit_from_agent().await;
+            app.set_active_session_name(name.clone()).await;
             println!("Loaded session: {name}");
-        }
-        ParsedSlashCommand::Sessions => {
-            let sessions = list_sessions(app.cwd())?;
-            if sessions.is_empty() {
-                println!("No saved sessions.");
-            } else {
-                println!("Saved sessions:");
-                for session in sessions {
-                    println!("  {session}");
-                }
-            }
         }
         ParsedSlashCommand::CommitAndPush => {
             run_commit_and_push(app.clone()).await?;
@@ -544,8 +532,6 @@ fn is_direct_command(input: &str) -> bool {
 fn help_text() -> String {
     let mut output = String::from("Grok Build Help:\n\n");
     append_help_section(&mut output, "Built-in Commands", CommandGroup::BuiltIn);
-    output.push('\n');
-    append_help_section(&mut output, "Session Commands", CommandGroup::Session);
     output.push('\n');
     append_help_section(&mut output, "Git Commands", CommandGroup::Git);
     output.push_str(
