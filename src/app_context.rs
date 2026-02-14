@@ -92,3 +92,96 @@ fn default_session_name() -> String {
         .as_millis();
     format!("auto-{millis}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AppContext, default_session_name};
+    use crate::agent::Agent;
+    use crate::settings::SettingsManager;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn default_session_name_has_expected_prefix() {
+        let name = default_session_name();
+        assert!(name.starts_with("auto-"));
+        assert!(name["auto-".len()..].chars().all(|ch| ch.is_ascii_digit()));
+    }
+
+    #[tokio::test]
+    async fn set_auto_edit_enabled_updates_runtime_and_agent_flags() {
+        let temp = TempDir::new("app-context-auto-edit");
+        let settings = SettingsManager::load_with_home(temp.path(), temp.path()).expect("settings");
+        let agent = Agent::new(
+            "test-key".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            "grok-code-fast-1".to_string(),
+            2,
+            temp.path(),
+        )
+        .expect("agent");
+        let app = AppContext::new(temp.path().to_path_buf(), agent, settings);
+
+        app.set_auto_edit_enabled(true).await;
+        assert!(app.auto_edit_enabled().await);
+        assert!(app.agent().lock().await.auto_edit_enabled());
+
+        app.set_auto_edit_enabled(false).await;
+        assert!(!app.auto_edit_enabled().await);
+        assert!(!app.agent().lock().await.auto_edit_enabled());
+    }
+
+    #[tokio::test]
+    async fn autosave_session_reuses_active_session_name() {
+        let temp = TempDir::new("app-context-autosave");
+        let settings = SettingsManager::load_with_home(temp.path(), temp.path()).expect("settings");
+        let agent = Agent::new(
+            "test-key".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            "grok-code-fast-1".to_string(),
+            2,
+            temp.path(),
+        )
+        .expect("agent");
+        let app = AppContext::new(temp.path().to_path_buf(), agent, settings);
+
+        let first = app.autosave_session().await.expect("first autosave");
+        let second = app.autosave_session().await.expect("second autosave");
+        assert_eq!(first, second);
+
+        let file = temp
+            .path()
+            .join(".grok")
+            .join("sessions")
+            .join(format!("{first}.json"));
+        assert!(file.exists(), "expected session file at {}", file.display());
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
