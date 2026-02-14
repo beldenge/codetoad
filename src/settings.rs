@@ -99,6 +99,10 @@ impl ApiKeyStorageMode {
 impl SettingsManager {
     pub fn load(cwd: &Path) -> Result<Self> {
         let home = home_dir().context("Failed to determine home directory")?;
+        Self::load_with_home(cwd, &home)
+    }
+
+    pub fn load_with_home(cwd: &Path, home: &Path) -> Result<Self> {
         let user_settings_path = home.join(".grok").join("user-settings.json");
         let project_settings_path = cwd.join(".grok").join("settings.json");
 
