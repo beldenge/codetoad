@@ -317,3 +317,128 @@ fn format_search_results(
 
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        FileSearchResult, SearchTextResult, calculate_file_score, execute_search,
+        format_search_results, normalize_file_path,
+    };
+    use crate::tool_context::ToolContext;
+    use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn normalize_file_path_trims_leading_dot_slash() {
+        assert_eq!(normalize_file_path("./src/main.rs"), "src/main.rs");
+        assert_eq!(normalize_file_path("src/lib.rs"), "src/lib.rs");
+    }
+
+    #[test]
+    fn calculate_file_score_prioritizes_exact_and_substring_matches() {
+        assert!(calculate_file_score("main.rs", "src/main.rs", "main.rs") >= 100);
+        assert!(
+            calculate_file_score("search_tool.rs", "src/tools/search_tool.rs", "search")
+                > calculate_file_score("tooling.rs", "src/tooling.rs", "search")
+        );
+    }
+
+    #[test]
+    fn format_search_results_deduplicates_and_limits_output() {
+        let text_results = vec![
+            SearchTextResult {
+                file: "src/a.rs".to_string(),
+            },
+            SearchTextResult {
+                file: "src/a.rs".to_string(),
+            },
+            SearchTextResult {
+                file: "src/b.rs".to_string(),
+            },
+        ];
+
+        let file_results = vec![
+            FileSearchResult {
+                path: "src/c.rs".to_string(),
+                score: 10,
+            },
+            FileSearchResult {
+                path: "src/a.rs".to_string(),
+                score: 10,
+            },
+        ];
+
+        let output = format_search_results("abc", &text_results, &file_results);
+        assert!(output.contains("Search results for \"abc\":"));
+        assert!(output.contains("src/a.rs (2 matches)"));
+        assert!(output.contains("src/b.rs (1 matches)"));
+        assert!(output.contains("src/c.rs"));
+    }
+
+    #[tokio::test]
+    async fn execute_search_rejects_empty_query() {
+        let temp = TempDir::new("search-empty-query");
+        let context = ToolContext::new(temp.path().to_path_buf()).expect("tool context");
+
+        let result = execute_search(&json!({ "query": "   " }), &context)
+            .await
+            .expect("search execution");
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("Missing or empty 'query' argument")
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_search_rejects_invalid_search_type() {
+        let temp = TempDir::new("search-invalid-type");
+        let context = ToolContext::new(temp.path().to_path_buf()).expect("tool context");
+
+        let result = execute_search(
+            &json!({
+                "query": "hello",
+                "search_type": "unsupported"
+            }),
+            &context,
+        )
+        .await
+        .expect("search execution");
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|msg| msg.contains("Invalid search_type"))
+        );
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
