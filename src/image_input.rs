@@ -428,6 +428,29 @@ mod tests {
         assert_eq!(prepared.warnings.len(), 0);
     }
 
+    #[test]
+    fn prepare_user_input_deduplicates_same_image_candidate() {
+        let cwd_dir = TempDir::new("image-input-dedup-cwd");
+        let image_dir = TempDir::new("image-input-dedup-img");
+        let image_path = image_dir.path().join("shot.png");
+        std::fs::write(&image_path, b"fake-png").expect("write image");
+
+        let input = format!(
+            "review {} and again ![same]({})",
+            image_path.display(),
+            image_path.display()
+        );
+        let prepared = prepare_user_input(&input, cwd_dir.path());
+        assert_eq!(prepared.attachments.len(), 1);
+    }
+
+    #[test]
+    fn absolute_path_candidate_ignores_non_image_extensions() {
+        let text = "look at C:\\tmp\\notes.txt";
+        let paths = extract_absolute_image_path_candidates(text);
+        assert!(paths.is_empty());
+    }
+
     struct TempDir {
         path: PathBuf,
     }

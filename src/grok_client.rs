@@ -563,10 +563,13 @@ impl ModelClient for GrokClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatCompletionsPayload, GrokClient, SearchMode, has_image_inputs};
+    use super::{
+        ChatCompletionsPayload, GrokClient, SearchMode, has_image_inputs, validate_status,
+    };
     use crate::message_projection::to_chat_completions_messages;
     use crate::protocol::ChatMessage;
     use crate::provider::{ProviderKind, detect_provider};
+    use reqwest::StatusCode;
     use serde_json::Value;
 
     #[test]
@@ -687,5 +690,43 @@ mod tests {
             }],
         )];
         assert!(has_image_inputs(&with_image));
+    }
+
+    #[test]
+    fn responses_model_search_auto_routes_code_model_to_grok4_default() {
+        let client = GrokClient::new(
+            "test_key".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            "grok-code-fast-1".to_string(),
+        )
+        .expect("client creates");
+
+        let selected = client.responses_model_for(SearchMode::Auto, false);
+        assert_eq!(selected, "grok-4-latest");
+    }
+
+    #[test]
+    fn responses_model_off_without_images_keeps_current_model() {
+        let client = GrokClient::new(
+            "test_key".to_string(),
+            "https://api.x.ai/v1".to_string(),
+            "grok-code-fast-1".to_string(),
+        )
+        .expect("client creates");
+
+        let selected = client.responses_model_for(SearchMode::Off, false);
+        assert_eq!(selected, "grok-code-fast-1");
+    }
+
+    #[test]
+    fn validate_status_returns_actionable_message_for_image_model_errors() {
+        let err = validate_status(
+            StatusCode::BAD_REQUEST,
+            r#"{"error":"Invalid request content: Image inputs are not supported by this model."}"#,
+        )
+        .expect_err("should return error");
+        let message = err.to_string();
+        assert!(message.contains("image-capable model"));
+        assert!(message.contains("GROK_IMAGE_MODEL"));
     }
 }

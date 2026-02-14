@@ -136,7 +136,7 @@ pub fn append_help_section(output: &mut String, title: &str, group: CommandGroup
 
 #[cfg(test)]
 mod tests {
-    use super::{ParsedSlashCommand, parse_slash_command};
+    use super::{ParsedSlashCommand, filtered_command_suggestions, parse_slash_command};
 
     #[test]
     fn parses_models_set_command() {
@@ -171,5 +171,24 @@ mod tests {
             parse_slash_command("/providers add"),
             Some(ParsedSlashCommand::AddProvider)
         ));
+    }
+
+    #[test]
+    fn command_suggestions_hide_argument_forms() {
+        let suggestions = filtered_command_suggestions("/models");
+        let commands = suggestions
+            .iter()
+            .map(|entry| entry.command)
+            .collect::<Vec<_>>();
+        assert!(commands.contains(&"/models"));
+        assert!(!commands.contains(&"/models <name>"));
+    }
+
+    #[test]
+    fn set_model_command_trims_extra_whitespace() {
+        match parse_slash_command("  /models    grok-4-latest   ") {
+            Some(ParsedSlashCommand::SetModel(model)) => assert_eq!(model, "grok-4-latest"),
+            _ => panic!("expected SetModel"),
+        }
     }
 }
