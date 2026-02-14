@@ -235,3 +235,9 @@ After changes:
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
+
+Optional secure-storage integration test (writes/reads a temporary provider key via OS keychain):
+
+```bash
+cargo test --features keychain-integration-tests --test settings_keychain
+```
