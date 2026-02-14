@@ -12,7 +12,7 @@ crossterm = "0.29"
 ctrlc = "3.4"
 dirs = "6.0"
 futures-util = "0.3"
-keyring = "3.6"
+keyring = { version = "3.6", features = ["apple-native", "windows-native", "linux-native-sync-persistent", "crypto-rust"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 rpassword = "7.4"
 serde = { version = "1.0", features = ["derive"] }
