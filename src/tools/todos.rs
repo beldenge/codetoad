@@ -139,3 +139,138 @@ fn format_todo_list(todos: &[TodoItem]) -> String {
     }
     output.trim_end().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{TodoStore, execute_create_todo_list, execute_update_todo_list};
+    use serde_json::json;
+
+    #[test]
+    fn create_todo_list_rejects_invalid_status_or_priority() {
+        let mut store = TodoStore::default();
+        let result = execute_create_todo_list(
+            &json!({
+                "todos": [
+                    {
+                        "id": "1",
+                        "content": "task",
+                        "status": "queued",
+                        "priority": "medium"
+                    }
+                ]
+            }),
+            &mut store,
+        )
+        .expect("tool call should parse");
+
+        assert!(!result.success);
+        let message = result.error.expect("error should exist");
+        assert!(message.contains("Each todo must include"));
+    }
+
+    #[test]
+    fn create_todo_list_accepts_valid_items_and_formats_output() {
+        let mut store = TodoStore::default();
+        let result = execute_create_todo_list(
+            &json!({
+                "todos": [
+                    {
+                        "id": "1",
+                        "content": "plan release",
+                        "status": "pending",
+                        "priority": "high"
+                    },
+                    {
+                        "id": "2",
+                        "content": "run tests",
+                        "status": "completed",
+                        "priority": "medium"
+                    }
+                ]
+            }),
+            &mut store,
+        )
+        .expect("tool call should parse");
+
+        assert!(result.success);
+        let output = result.output.expect("output should exist");
+        assert!(output.contains("○ plan release"));
+        assert!(output.contains("● run tests"));
+    }
+
+    #[test]
+    fn update_todo_list_updates_existing_item() {
+        let mut store = TodoStore::default();
+        execute_create_todo_list(
+            &json!({
+                "todos": [
+                    {
+                        "id": "1",
+                        "content": "task",
+                        "status": "pending",
+                        "priority": "low"
+                    }
+                ]
+            }),
+            &mut store,
+        )
+        .expect("seed todo");
+
+        let result = execute_update_todo_list(
+            &json!({
+                "updates": [
+                    {
+                        "id": "1",
+                        "status": "in_progress",
+                        "priority": "high"
+                    }
+                ]
+            }),
+            &mut store,
+        )
+        .expect("update should parse");
+
+        assert!(result.success);
+        let output = result.output.expect("output should exist");
+        assert!(output.contains("◐ task"));
+    }
+
+    #[test]
+    fn update_todo_list_reports_missing_todo_id() {
+        let mut store = TodoStore::default();
+        let result = execute_update_todo_list(
+            &json!({
+                "updates": [
+                    {
+                        "id": "missing",
+                        "status": "completed"
+                    }
+                ]
+            }),
+            &mut store,
+        )
+        .expect("update should parse");
+
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("Todo with id 'missing' not found")
+        );
+    }
+
+    #[test]
+    fn restore_snapshot_rejects_invalid_item_shape() {
+        let mut store = TodoStore::default();
+        let err = store
+            .restore_value(json!([
+                {
+                    "id": "1",
+                    "content": "task",
+                    "status": "pending",
+                    "priority": "urgent"
+                }
+            ]))
+            .expect_err("invalid priority should fail");
+        assert!(err.to_string().contains("invalid item"));
+    }
+}
