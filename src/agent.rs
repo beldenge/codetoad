@@ -500,3 +500,401 @@ fn send_cancelled(updates: &mpsc::UnboundedSender<AgentEvent>) {
         .ok();
     updates.send(AgentEvent::Done).ok();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Agent, AgentEvent, ConfirmationDecision, ToolCallSummary, parse_tool_arguments};
+    use crate::confirmation::ConfirmationOperation;
+    use crate::grok_client::SearchMode;
+    use crate::model_client::{ModelClient, StreamChunkHandler};
+    use crate::protocol::{
+        ChatChoice, ChatCompletionMessage, ChatCompletionResponse, ChatCompletionStreamChoice,
+        ChatCompletionStreamChunk, ChatCompletionStreamDelta, ChatMessage, ChatTool, ChatToolCall,
+        ChatToolCallFunction,
+    };
+    use anyhow::{Result, anyhow};
+    use async_trait::async_trait;
+    use serde_json::json;
+    use std::collections::VecDeque;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn parse_tool_arguments_returns_empty_object_for_invalid_json() {
+        let value = parse_tool_arguments("not json");
+        assert_eq!(value, json!({}));
+    }
+
+    #[test]
+    fn auto_edit_and_session_permissions_control_auto_approval() {
+        let temp = TempDir::new("agent-auto-approve");
+        let client = MockClient::new("grok-code-fast-1");
+        let mut agent = Agent::with_client(client, 2, temp.path()).expect("agent");
+
+        assert!(!agent.is_operation_auto_approved(ConfirmationOperation::File));
+        assert!(!agent.is_operation_auto_approved(ConfirmationOperation::Bash));
+
+        agent.remember_operation_for_session(ConfirmationOperation::Bash);
+        assert!(agent.is_operation_auto_approved(ConfirmationOperation::Bash));
+        assert!(!agent.is_operation_auto_approved(ConfirmationOperation::File));
+
+        agent.set_auto_edit_enabled(true);
+        assert!(agent.is_operation_auto_approved(ConfirmationOperation::File));
+        assert!(agent.is_operation_auto_approved(ConfirmationOperation::Bash));
+
+        agent.set_auto_edit_enabled(false);
+        assert!(!agent.is_operation_auto_approved(ConfirmationOperation::File));
+        assert!(!agent.is_operation_auto_approved(ConfirmationOperation::Bash));
+    }
+
+    #[tokio::test]
+    async fn process_user_message_returns_assistant_content_without_tools() {
+        let temp = TempDir::new("agent-process-simple");
+        let client =
+            MockClient::with_chat("grok-code-fast-1", vec![chat_response("hello back", None)]);
+        let mut agent = Agent::with_client(client, 2, temp.path()).expect("agent");
+
+        let output = agent.process_user_message("hello").await.expect("response");
+        assert_eq!(output, "hello back");
+        assert_eq!(agent.messages.len(), 3);
+        assert_eq!(agent.messages[1].role, "user");
+        assert_eq!(agent.messages[2].role, "assistant");
+    }
+
+    #[tokio::test]
+    async fn process_user_message_executes_tool_round_then_returns_final_answer() {
+        let temp = TempDir::new("agent-process-tool-round");
+        let responses = vec![
+            chat_response(
+                "",
+                Some(vec![tool_call("call_1", "not_a_real_tool", r#"{"x":1}"#)]),
+            ),
+            chat_response("done", None),
+        ];
+        let client = MockClient::with_chat("grok-code-fast-1", responses);
+        let mut agent = Agent::with_client(client, 3, temp.path()).expect("agent");
+
+        let output = agent.process_user_message("run").await.expect("response");
+        assert_eq!(output, "done");
+        assert_eq!(agent.messages.len(), 5);
+        assert_eq!(agent.messages[3].role, "tool");
+        assert_eq!(
+            agent.messages[3].content.as_deref(),
+            Some("Unknown tool: not_a_real_tool")
+        );
+    }
+
+    #[tokio::test]
+    async fn process_user_message_returns_max_round_message_when_tool_loop_never_finishes() {
+        let temp = TempDir::new("agent-process-max-rounds");
+        let client = MockClient::with_chat(
+            "grok-code-fast-1",
+            vec![chat_response(
+                "",
+                Some(vec![tool_call("call_1", "not_a_real_tool", "{}")]),
+            )],
+        );
+        let mut agent = Agent::with_client(client, 1, temp.path()).expect("agent");
+
+        let output = agent.process_user_message("loop").await.expect("response");
+        assert_eq!(output, "Maximum tool execution rounds reached.");
+    }
+
+    #[tokio::test]
+    async fn session_snapshot_restores_model_messages_and_flags() {
+        let temp = TempDir::new("agent-snapshot");
+        let mut agent =
+            Agent::with_client(MockClient::new("model-a"), 2, temp.path()).expect("agent one");
+        agent.set_auto_edit_enabled(true);
+        agent.messages.push(ChatMessage::user("hello"));
+
+        let snapshot = agent.session_snapshot().expect("snapshot");
+
+        let mut restored =
+            Agent::with_client(MockClient::new("model-b"), 2, temp.path()).expect("agent two");
+        restored
+            .restore_session_snapshot(snapshot)
+            .expect("restore snapshot");
+
+        assert_eq!(restored.current_model(), "model-a");
+        assert!(restored.auto_edit_enabled());
+        assert!(restored.is_operation_auto_approved(ConfirmationOperation::File));
+        assert_eq!(restored.messages.len(), 2);
+        assert_eq!(restored.messages[1].content.as_deref(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn confirm_tool_call_handles_reject_and_approve_with_memory() {
+        let temp = TempDir::new("agent-confirm");
+        let mut agent =
+            Agent::with_client(MockClient::new("model"), 2, temp.path()).expect("agent");
+        let cancel = CancellationToken::new();
+
+        let (updates_tx, mut updates_rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let (confirm_tx, confirm_rx) = mpsc::unbounded_channel::<ConfirmationDecision>();
+        let confirm_rx = Arc::new(tokio::sync::Mutex::new(confirm_rx));
+
+        confirm_tx
+            .send(ConfirmationDecision::Reject {
+                tool_call_id: "call_reject".to_string(),
+                feedback: Some("nope".to_string()),
+            })
+            .ok();
+
+        let rejected = agent
+            .confirm_tool_call(
+                ToolCallSummary {
+                    id: "call_reject".to_string(),
+                    name: "bash".to_string(),
+                    arguments: r#"{"command":"echo hi"}"#.to_string(),
+                },
+                ConfirmationOperation::Bash,
+                &updates_tx,
+                Some(&confirm_rx),
+                &cancel,
+            )
+            .await;
+        assert_eq!(rejected.as_deref(), Some("nope"));
+        let confirmation_event = updates_rx.recv().await.expect("confirmation event");
+        assert!(matches!(
+            confirmation_event,
+            AgentEvent::ConfirmationRequest { .. }
+        ));
+
+        let (updates_tx2, mut updates_rx2) = mpsc::unbounded_channel::<AgentEvent>();
+        let (confirm_tx2, confirm_rx2) = mpsc::unbounded_channel::<ConfirmationDecision>();
+        let confirm_rx2 = Arc::new(tokio::sync::Mutex::new(confirm_rx2));
+        confirm_tx2
+            .send(ConfirmationDecision::Approve {
+                tool_call_id: "call_approve".to_string(),
+                remember_for_session: true,
+            })
+            .ok();
+
+        let approved = agent
+            .confirm_tool_call(
+                ToolCallSummary {
+                    id: "call_approve".to_string(),
+                    name: "bash".to_string(),
+                    arguments: r#"{"command":"echo ok"}"#.to_string(),
+                },
+                ConfirmationOperation::Bash,
+                &updates_tx2,
+                Some(&confirm_rx2),
+                &cancel,
+            )
+            .await;
+        assert!(approved.is_none());
+        assert!(agent.is_operation_auto_approved(ConfirmationOperation::Bash));
+        let confirmation_event2 = updates_rx2.recv().await.expect("confirmation event");
+        assert!(matches!(
+            confirmation_event2,
+            AgentEvent::ConfirmationRequest { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn process_user_message_stream_emits_content_and_done() {
+        let temp = TempDir::new("agent-stream-content");
+        let stream_chunks = vec![vec![stream_content_chunk("hello")]];
+        let client = MockClient::with_stream("model", stream_chunks);
+        let mut agent = Agent::with_client(client, 2, temp.path()).expect("agent");
+        let cancel = CancellationToken::new();
+        let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
+
+        agent
+            .process_user_message_stream("prompt".to_string(), Vec::new(), cancel, updates_tx, None)
+            .await
+            .expect("stream call");
+
+        let mut saw_content = false;
+        let mut saw_done = false;
+        while let Ok(event) = updates_rx.try_recv() {
+            match event {
+                AgentEvent::Content(chunk) if chunk.contains("hello") => saw_content = true,
+                AgentEvent::Done => saw_done = true,
+                _ => {}
+            }
+        }
+        assert!(saw_content);
+        assert!(saw_done);
+    }
+
+    #[tokio::test]
+    async fn process_user_message_stream_honors_pre_cancelled_token() {
+        let temp = TempDir::new("agent-stream-cancel");
+        let client = MockClient::new("model");
+        let mut agent = Agent::with_client(client, 2, temp.path()).expect("agent");
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let (updates_tx, mut updates_rx) = mpsc::unbounded_channel();
+
+        agent
+            .process_user_message_stream("prompt".to_string(), Vec::new(), cancel, updates_tx, None)
+            .await
+            .expect("stream call");
+
+        let mut saw_cancel_message = false;
+        let mut saw_done = false;
+        while let Ok(event) = updates_rx.try_recv() {
+            match event {
+                AgentEvent::Content(text) if text.contains("Operation cancelled by user") => {
+                    saw_cancel_message = true
+                }
+                AgentEvent::Done => saw_done = true,
+                _ => {}
+            }
+        }
+        assert!(saw_cancel_message);
+        assert!(saw_done);
+    }
+
+    fn chat_response(
+        content: &str,
+        tool_calls: Option<Vec<ChatToolCall>>,
+    ) -> ChatCompletionResponse {
+        ChatCompletionResponse {
+            choices: vec![ChatChoice {
+                message: ChatCompletionMessage {
+                    content: Some(content.to_string()),
+                    tool_calls,
+                },
+            }],
+        }
+    }
+
+    fn tool_call(id: &str, name: &str, arguments: &str) -> ChatToolCall {
+        ChatToolCall {
+            id: id.to_string(),
+            r#type: "function".to_string(),
+            function: ChatToolCallFunction {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        }
+    }
+
+    fn stream_content_chunk(content: &str) -> ChatCompletionStreamChunk {
+        ChatCompletionStreamChunk {
+            choices: vec![ChatCompletionStreamChoice {
+                delta: ChatCompletionStreamDelta {
+                    content: Some(content.to_string()),
+                    tool_calls: None,
+                },
+            }],
+        }
+    }
+
+    struct MockClient {
+        model: String,
+        chat_responses: Arc<Mutex<VecDeque<ChatCompletionResponse>>>,
+        stream_sequences: Arc<Mutex<VecDeque<Vec<ChatCompletionStreamChunk>>>>,
+        plain_text: Arc<Mutex<String>>,
+    }
+
+    impl MockClient {
+        fn new(model: &str) -> Self {
+            Self {
+                model: model.to_string(),
+                chat_responses: Arc::new(Mutex::new(VecDeque::new())),
+                stream_sequences: Arc::new(Mutex::new(VecDeque::new())),
+                plain_text: Arc::new(Mutex::new("ok".to_string())),
+            }
+        }
+
+        fn with_chat(model: &str, responses: Vec<ChatCompletionResponse>) -> Self {
+            let client = Self::new(model);
+            *client.chat_responses.lock().expect("lock chat responses") =
+                responses.into_iter().collect();
+            client
+        }
+
+        fn with_stream(model: &str, sequences: Vec<Vec<ChatCompletionStreamChunk>>) -> Self {
+            let client = Self::new(model);
+            *client
+                .stream_sequences
+                .lock()
+                .expect("lock stream sequences") = sequences.into_iter().collect();
+            client
+        }
+    }
+
+    #[async_trait]
+    impl ModelClient for MockClient {
+        fn set_model(&mut self, model: String) {
+            self.model = model;
+        }
+
+        fn current_model(&self) -> &str {
+            self.model.as_str()
+        }
+
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[ChatTool],
+            _search_mode: SearchMode,
+        ) -> Result<ChatCompletionResponse> {
+            self.chat_responses
+                .lock()
+                .expect("lock chat responses")
+                .pop_front()
+                .ok_or_else(|| anyhow!("No queued chat response"))
+        }
+
+        async fn stream_chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[ChatTool],
+            _search_mode: SearchMode,
+            _cancel_token: &CancellationToken,
+            on_chunk: &mut StreamChunkHandler<'_>,
+        ) -> Result<()> {
+            let chunks = self
+                .stream_sequences
+                .lock()
+                .expect("lock stream sequences")
+                .pop_front()
+                .unwrap_or_default();
+            for chunk in chunks {
+                on_chunk(chunk)?;
+            }
+            Ok(())
+        }
+
+        async fn plain_completion(&self, _prompt: &str) -> Result<String> {
+            Ok(self.plain_text.lock().expect("lock plain text").clone())
+        }
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}

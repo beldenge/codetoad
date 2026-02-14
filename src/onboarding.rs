@@ -1,7 +1,7 @@
 use crate::provider::{XAI_DEFAULT_BASE_URL, default_model_for, detect_provider};
 use crate::settings::{ApiKeySaveLocation, SettingsManager};
 use anyhow::{Context, Result, bail};
-use std::io::{self, Write};
+use std::io::{self, BufRead, Write};
 
 pub fn run_first_time_setup(settings: &mut SettingsManager) -> Result<()> {
     println!("No API key is configured for the active provider.");
@@ -88,22 +88,32 @@ fn prompt_provider_type() -> Result<ProviderType> {
     println!("  2. OpenAI-compatible");
     loop {
         let selection = prompt_with_default("Choice", "1")?;
-        match selection.trim() {
-            "1" => return Ok(ProviderType::Xai),
-            "2" => return Ok(ProviderType::OpenAiCompatible),
-            _ => println!("Enter 1 or 2."),
+        if let Some(provider) = parse_provider_choice(&selection) {
+            return Ok(provider);
         }
+        println!("Enter 1 or 2.");
     }
 }
 
 fn prompt_with_default(prompt: &str, default: &str) -> Result<String> {
-    print!("{prompt} [{default}]: ");
-    io::stdout().flush().context("Failed flushing stdout")?;
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .context("Failed reading input")?;
-    let value = input.trim();
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    let mut output = io::stdout();
+    prompt_with_default_io(prompt, default, &mut input, &mut output)
+}
+
+fn prompt_with_default_io<R: BufRead, W: Write>(
+    prompt: &str,
+    default: &str,
+    input: &mut R,
+    output: &mut W,
+) -> Result<String> {
+    write!(output, "{prompt} [{default}]: ").context("Failed writing prompt")?;
+    output.flush().context("Failed flushing stdout")?;
+
+    let mut raw = String::new();
+    input.read_line(&mut raw).context("Failed reading input")?;
+    let value = raw.trim();
     if value.is_empty() {
         if default.trim().is_empty() {
             bail!("{prompt} cannot be empty");
@@ -114,8 +124,65 @@ fn prompt_with_default(prompt: &str, default: &str) -> Result<String> {
     }
 }
 
+fn parse_provider_choice(selection: &str) -> Option<ProviderType> {
+    match selection.trim() {
+        "1" => Some(ProviderType::Xai),
+        "2" => Some(ProviderType::OpenAiCompatible),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ProviderType {
     Xai,
     OpenAiCompatible,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProviderType, parse_provider_choice, prompt_with_default_io};
+    use std::io::Cursor;
+
+    #[test]
+    fn parse_provider_choice_accepts_known_options() {
+        assert!(matches!(
+            parse_provider_choice("1"),
+            Some(ProviderType::Xai)
+        ));
+        assert!(matches!(
+            parse_provider_choice(" 2 "),
+            Some(ProviderType::OpenAiCompatible)
+        ));
+        assert!(parse_provider_choice("x").is_none());
+    }
+
+    #[test]
+    fn prompt_with_default_uses_default_for_blank_input() {
+        let mut input = Cursor::new("\n");
+        let mut output = Vec::<u8>::new();
+        let value =
+            prompt_with_default_io("Base URL", "https://api.x.ai/v1", &mut input, &mut output)
+                .expect("prompt value");
+        assert_eq!(value, "https://api.x.ai/v1");
+        let rendered = String::from_utf8(output).expect("utf8 output");
+        assert!(rendered.contains("Base URL [https://api.x.ai/v1]: "));
+    }
+
+    #[test]
+    fn prompt_with_default_returns_trimmed_input_when_provided() {
+        let mut input = Cursor::new("  custom-value  \n");
+        let mut output = Vec::<u8>::new();
+        let value =
+            prompt_with_default_io("Provider id", "xai", &mut input, &mut output).expect("value");
+        assert_eq!(value, "custom-value");
+    }
+
+    #[test]
+    fn prompt_with_default_errors_when_both_input_and_default_are_empty() {
+        let mut input = Cursor::new("\n");
+        let mut output = Vec::<u8>::new();
+        let err = prompt_with_default_io("Provider id", "", &mut input, &mut output)
+            .expect_err("expected empty default error");
+        assert!(err.to_string().contains("cannot be empty"));
+    }
 }

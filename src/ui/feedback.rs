@@ -149,3 +149,90 @@ fn tool_target(tool: &ToolCallSummary) -> String {
     }
     String::new()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        confirmation_detail, confirmation_operation_label, pretty_tool_name, tool_label,
+        tool_target,
+    };
+    use crate::agent::ToolCallSummary;
+    use crate::confirmation::ConfirmationOperation;
+
+    #[test]
+    fn confirmation_operation_label_matches_expected_text() {
+        assert_eq!(
+            confirmation_operation_label(ConfirmationOperation::File),
+            "file operations"
+        );
+        assert_eq!(
+            confirmation_operation_label(ConfirmationOperation::Bash),
+            "bash commands"
+        );
+    }
+
+    #[test]
+    fn confirmation_detail_prefers_command_then_path() {
+        let command_call = ToolCallSummary {
+            id: "1".to_string(),
+            name: "bash".to_string(),
+            arguments: r#"{"command":"ls -la"}"#.to_string(),
+        };
+        assert_eq!(confirmation_detail(&command_call), "command: ls -la");
+
+        let path_call = ToolCallSummary {
+            id: "2".to_string(),
+            name: "view_file".to_string(),
+            arguments: r#"{"path":"src/main.rs"}"#.to_string(),
+        };
+        assert_eq!(confirmation_detail(&path_call), "path: src/main.rs");
+    }
+
+    #[test]
+    fn confirmation_detail_handles_invalid_arguments() {
+        let call = ToolCallSummary {
+            id: "3".to_string(),
+            name: "bash".to_string(),
+            arguments: "not-json".to_string(),
+        };
+        assert_eq!(
+            confirmation_detail(&call),
+            "operation details unavailable".to_string()
+        );
+    }
+
+    #[test]
+    fn tool_target_extracts_known_argument_fields() {
+        let from_path = ToolCallSummary {
+            id: "1".to_string(),
+            name: "view_file".to_string(),
+            arguments: r#"{"path":"README.md"}"#.to_string(),
+        };
+        assert_eq!(tool_target(&from_path), "README.md");
+
+        let from_command = ToolCallSummary {
+            id: "2".to_string(),
+            name: "bash".to_string(),
+            arguments: r#"{"command":"git status"}"#.to_string(),
+        };
+        assert_eq!(tool_target(&from_command), "git status");
+
+        let invalid = ToolCallSummary {
+            id: "3".to_string(),
+            name: "search".to_string(),
+            arguments: "bad".to_string(),
+        };
+        assert_eq!(tool_target(&invalid), "");
+    }
+
+    #[test]
+    fn tool_label_uses_pretty_tool_name_and_target() {
+        let call = ToolCallSummary {
+            id: "1".to_string(),
+            name: "view_file".to_string(),
+            arguments: r#"{"path":"src/lib.rs"}"#.to_string(),
+        };
+        assert_eq!(pretty_tool_name("view_file"), "Read");
+        assert_eq!(tool_label(&call), "Read(src/lib.rs)");
+    }
+}

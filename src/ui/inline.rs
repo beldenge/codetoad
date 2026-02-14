@@ -532,6 +532,7 @@ async fn run_commit_and_push(app: AppContext) -> Result<()> {
         app.agent(),
         CommitAndPushOptions {
             default_commit_message: Some("chore: update project files".to_string()),
+            skip_push: false,
         },
         |event| match event {
             CommitAndPushEvent::NoChanges => {
@@ -657,4 +658,43 @@ fn poll_cancel_request() -> Result<bool> {
 
     Ok(key.code == KeyCode::Esc
         || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_bytes, format_elapsed, format_token_count, help_text, is_direct_command};
+    use std::time::Duration;
+
+    #[test]
+    fn direct_command_detection_only_matches_known_prefixes() {
+        assert!(is_direct_command("ls -la"));
+        assert!(is_direct_command("pwd"));
+        assert!(!is_direct_command("python script.py"));
+        assert!(!is_direct_command(""));
+    }
+
+    #[test]
+    fn help_text_includes_core_sections_and_controls() {
+        let help = help_text();
+        assert!(help.contains("Built-in Commands"));
+        assert!(help.contains("Provider Commands"));
+        assert!(help.contains("Git Commands"));
+        assert!(help.contains("Input Controls"));
+        assert!(help.contains("Inline mode keeps native terminal scrollback"));
+    }
+
+    #[test]
+    fn elapsed_and_token_formatters_are_human_readable() {
+        assert_eq!(format_elapsed(Duration::from_millis(1530)), "1.5s");
+        assert_eq!(format_token_count(999), "999");
+        assert_eq!(format_token_count(1_250), "1.2k");
+        assert_eq!(format_token_count(1_750_000), "1.8M");
+    }
+
+    #[test]
+    fn byte_formatter_scales_values() {
+        assert_eq!(format_bytes(999), "999 B");
+        assert_eq!(format_bytes(2048), "2.0 KB");
+        assert_eq!(format_bytes(3 * 1024 * 1024), "3.0 MB");
+    }
 }
