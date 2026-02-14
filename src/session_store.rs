@@ -135,3 +135,148 @@ fn epoch_millis() -> u128 {
         .unwrap_or_default()
         .as_millis()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        SESSION_FILE_EXTENSION, SESSIONS_DIR, SessionFile, list_sessions, load_session,
+        normalize_session_name, save_session,
+    };
+    use crate::agent::AgentSessionSnapshot;
+    use serde_json::json;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn normalize_session_name_sanitizes_and_rejects_empty_values() {
+        assert_eq!(
+            normalize_session_name(Some("  my/session:name  ")),
+            Some("my-session-name".to_string())
+        );
+        assert_eq!(
+            normalize_session_name(Some("keep_me-123")),
+            Some("keep_me-123".to_string())
+        );
+        assert_eq!(normalize_session_name(Some("   ")), None);
+        assert_eq!(normalize_session_name(Some("---")), None);
+        assert_eq!(normalize_session_name(None), None);
+    }
+
+    #[test]
+    fn save_and_load_session_round_trip() {
+        let temp = TempDir::new("session-store-roundtrip");
+        let snapshot = sample_snapshot();
+
+        let saved_name =
+            save_session(temp.path(), Some(" Sprint / Alpha "), snapshot.clone()).expect("save");
+        assert_eq!(saved_name, "Sprint---Alpha");
+
+        let loaded = load_session(temp.path(), "Sprint / Alpha").expect("load");
+        assert_eq!(
+            serde_json::to_value(loaded).expect("serialize loaded"),
+            serde_json::to_value(snapshot).expect("serialize snapshot")
+        );
+    }
+
+    #[test]
+    fn load_session_fails_for_missing_session() {
+        let temp = TempDir::new("session-store-missing");
+        let err = load_session(temp.path(), "does-not-exist").expect_err("must fail");
+        assert!(err.to_string().contains("Session not found"));
+    }
+
+    #[test]
+    fn load_session_rejects_unsupported_version() {
+        let temp = TempDir::new("session-store-version");
+        let sessions_dir = temp.path().join(SESSIONS_DIR);
+        fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+
+        let invalid = SessionFile {
+            version: 99,
+            saved_at_epoch_ms: 0,
+            snapshot: sample_snapshot(),
+        };
+        let path = sessions_dir.join(format!("bad.{SESSION_FILE_EXTENSION}"));
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&invalid).expect("encode invalid"),
+        )
+        .expect("write invalid session");
+
+        let err = load_session(temp.path(), "bad").expect_err("must fail");
+        assert!(err.to_string().contains("Unsupported session file version"));
+    }
+
+    #[test]
+    fn list_sessions_returns_json_files_sorted_by_recent_mtime() {
+        let temp = TempDir::new("session-store-list");
+        let first = sample_snapshot();
+        let second = sample_snapshot();
+
+        save_session(temp.path(), Some("first"), first).expect("save first");
+        thread::sleep(Duration::from_millis(20));
+        save_session(temp.path(), Some("second"), second).expect("save second");
+
+        let sessions_dir = temp.path().join(SESSIONS_DIR);
+        fs::create_dir_all(sessions_dir.join("nested")).expect("create nested dir");
+        fs::write(sessions_dir.join("ignored.txt"), "ignore").expect("write ignored");
+
+        let names = list_sessions(temp.path()).expect("list sessions");
+        assert_eq!(names, vec!["second".to_string(), "first".to_string()]);
+    }
+
+    fn sample_snapshot() -> AgentSessionSnapshot {
+        serde_json::from_value(json!({
+            "model": "grok-code-fast-1",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "system prompt"
+                },
+                {
+                    "role": "user",
+                    "content": "hello"
+                }
+            ],
+            "tool_session": {
+                "current_dir": ".",
+                "todos": {
+                    "todos": []
+                }
+            },
+            "auto_edit_enabled": false,
+            "session_allow_file_ops": false,
+            "session_allow_bash_ops": false
+        }))
+        .expect("decode snapshot")
+    }
+
+    struct TempDir {
+        path: PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock should be after epoch")
+                .as_nanos();
+            let pid = std::process::id();
+            let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
