@@ -54,3 +54,65 @@ pub enum ApiKeyStorageArg {
     Keychain,
     Plaintext,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiKeyStorageArg, Cli, Commands, GitCommands};
+    use clap::Parser;
+
+    #[test]
+    fn parses_global_flags_and_message_arguments() {
+        let cli = Cli::parse_from([
+            "grok-build",
+            "--directory",
+            "repo",
+            "--api-key",
+            "key-123",
+            "--base-url",
+            "https://api.openai.com/v1",
+            "--model",
+            "gpt-4.1",
+            "--prompt",
+            "hello",
+            "--max-tool-rounds",
+            "12",
+            "write",
+            "tests",
+        ]);
+
+        assert_eq!(cli.directory.as_deref(), Some(std::path::Path::new("repo")));
+        assert_eq!(cli.api_key.as_deref(), Some("key-123"));
+        assert_eq!(cli.base_url.as_deref(), Some("https://api.openai.com/v1"));
+        assert_eq!(cli.model.as_deref(), Some("gpt-4.1"));
+        assert_eq!(cli.prompt.as_deref(), Some("hello"));
+        assert_eq!(cli.max_tool_rounds, 12);
+        assert_eq!(cli.message, vec!["write".to_string(), "tests".to_string()]);
+    }
+
+    #[test]
+    fn parses_git_commit_and_push_subcommand() {
+        let cli = Cli::parse_from(["grok-build", "git", "commit-and-push"]);
+
+        match cli.command {
+            Some(Commands::Git { command }) => {
+                assert!(matches!(command, GitCommands::CommitAndPush));
+            }
+            _ => panic!("expected git commit-and-push command"),
+        }
+    }
+
+    #[test]
+    fn parses_api_key_storage_value_enum() {
+        let keychain = Cli::parse_from(["grok-build", "--api-key-storage", "keychain"]);
+        assert!(matches!(
+            keychain.api_key_storage,
+            Some(ApiKeyStorageArg::Keychain)
+        ));
+
+        let plaintext = Cli::parse_from(["grok-build", "--api-key-storage", "plaintext"]);
+        assert!(matches!(
+            plaintext.api_key_storage,
+            Some(ApiKeyStorageArg::Plaintext)
+        ));
+    }
+}
