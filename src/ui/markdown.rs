@@ -342,3 +342,56 @@ fn is_lang_keyword(lang: &str, word: &str) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        code_comment_prefix, is_comment_start, is_heading_line, is_lang_keyword, split_list_prefix,
+    };
+
+    #[test]
+    fn heading_detection_requires_hash_space_prefix() {
+        assert!(is_heading_line("# Title"));
+        assert!(is_heading_line("### Subtitle"));
+        assert!(!is_heading_line("####### Too deep"));
+        assert!(!is_heading_line("#NoSpace"));
+        assert!(!is_heading_line("plain text"));
+    }
+
+    #[test]
+    fn split_list_prefix_handles_bullets_and_numbered_lists() {
+        assert_eq!(split_list_prefix("  - item"), Some(("  ", "- ", "item")));
+        assert_eq!(split_list_prefix("* another"), Some(("", "* ", "another")));
+        assert_eq!(
+            split_list_prefix("12. numbered"),
+            Some(("", "12. ", "numbered"))
+        );
+        assert_eq!(split_list_prefix("1) not-supported"), None);
+        assert_eq!(split_list_prefix("no list"), None);
+    }
+
+    #[test]
+    fn comment_prefix_matches_language_family() {
+        assert_eq!(code_comment_prefix("python"), "#");
+        assert_eq!(code_comment_prefix("sql"), "--");
+        assert_eq!(code_comment_prefix("rust"), "//");
+    }
+
+    #[test]
+    fn comment_start_detection_uses_selected_prefix() {
+        assert!(is_comment_start('#', None, "#"));
+        assert!(is_comment_start('-', Some('-'), "--"));
+        assert!(is_comment_start('/', Some('/'), "//"));
+        assert!(!is_comment_start('-', Some('x'), "--"));
+        assert!(!is_comment_start('/', Some('*'), "//"));
+    }
+
+    #[test]
+    fn language_keyword_detection_is_language_specific() {
+        assert!(is_lang_keyword("rust", "fn"));
+        assert!(!is_lang_keyword("rust", "function"));
+        assert!(is_lang_keyword("typescript", "function"));
+        assert!(is_lang_keyword("python", "lambda"));
+        assert!(!is_lang_keyword("unknown", "fn"));
+    }
+}
