@@ -525,3 +525,44 @@ fn build_prompt_panel(
 
     lines
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_prompt_panel, next_boundary, prev_boundary, previous_word_start};
+
+    #[test]
+    fn boundaries_handle_utf8_characters() {
+        let input = "a🙂b";
+        let after_a = next_boundary(input, 0);
+        assert_eq!(after_a, 1);
+        let after_emoji = next_boundary(input, after_a);
+        assert_eq!(after_emoji, 5);
+        let back_to_emoji_start = prev_boundary(input, after_emoji);
+        assert_eq!(back_to_emoji_start, 1);
+    }
+
+    #[test]
+    fn previous_word_start_skips_spaces_and_word_chars() {
+        let input = "alpha beta  gamma";
+        let cursor = input.len();
+        assert_eq!(previous_word_start(input, cursor), 12);
+        assert_eq!(previous_word_start(input, 10), 6);
+        assert_eq!(previous_word_start(input, 5), 0);
+    }
+
+    #[test]
+    fn prompt_panel_without_slash_only_contains_status_line() {
+        let panel = build_prompt_panel("hello", 0, false, "grok-code-fast-1");
+        assert_eq!(panel.len(), 1);
+        assert!(panel[0].contains("auto-edit: off"));
+        assert!(panel[0].contains("grok-code-fast-1"));
+    }
+
+    #[test]
+    fn prompt_panel_with_slash_includes_commands_section() {
+        let panel = build_prompt_panel("/", 0, true, "grok-4");
+        assert!(panel.len() >= 3);
+        assert!(panel[0].contains("auto-edit: on"));
+        assert!(panel.iter().any(|line| line.contains("slash commands:")));
+    }
+}
