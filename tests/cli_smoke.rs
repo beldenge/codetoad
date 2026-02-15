@@ -1,7 +1,7 @@
 use std::process::Command;
 
 fn bin_path() -> &'static str {
-    env!("CARGO_BIN_EXE_grok-build")
+    env!("CARGO_BIN_EXE_codetoad")
 }
 
 #[test]
@@ -18,8 +18,8 @@ fn help_flag_succeeds_and_shows_usage() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("grok-build"));
-    assert!(stdout.contains("A Rust-based Grok coding CLI"));
+    assert!(stdout.contains("codetoad"));
+    assert!(stdout.contains("A friendly code toad CLI"));
 }
 
 #[test]
@@ -36,5 +36,5 @@ fn version_flag_succeeds_and_includes_binary_name() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("grok-build"));
+    assert!(stdout.contains("codetoad"));
 }

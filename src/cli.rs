@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "grok-build",
+    name = "codetoad",
     version,
-    about = "A Rust-based Grok coding CLI with terminal-native streaming UI"
+    about = "A friendly code toad CLI with terminal-native streaming UI"
 )]
 pub struct Cli {
     #[arg(short = 'd', long = "directory", global = true)]
@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn parses_global_flags_and_message_arguments() {
         let cli = Cli::parse_from([
-            "grok-build",
+            "codetoad",
             "--directory",
             "repo",
             "--api-key",
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn parses_git_commit_and_push_subcommand() {
-        let cli = Cli::parse_from(["grok-build", "git", "commit-and-push"]);
+        let cli = Cli::parse_from(["codetoad", "git", "commit-and-push"]);
 
         match cli.command {
             Some(Commands::Git { command }) => {
@@ -103,13 +103,13 @@ mod tests {
 
     #[test]
     fn parses_api_key_storage_value_enum() {
-        let keychain = Cli::parse_from(["grok-build", "--api-key-storage", "keychain"]);
+        let keychain = Cli::parse_from(["codetoad", "--api-key-storage", "keychain"]);
         assert!(matches!(
             keychain.api_key_storage,
             Some(ApiKeyStorageArg::Keychain)
         ));
 
-        let plaintext = Cli::parse_from(["grok-build", "--api-key-storage", "plaintext"]);
+        let plaintext = Cli::parse_from(["codetoad", "--api-key-storage", "plaintext"]);
         assert!(matches!(
             plaintext.api_key_storage,
             Some(ApiKeyStorageArg::Plaintext)

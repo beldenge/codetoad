@@ -463,7 +463,7 @@ mod tests {
                 .expect("clock")
                 .as_nanos();
             path.push(format!(
-                "grok-build-{}-{}-{}",
+                "codetoad-{}-{}-{}",
                 prefix,
                 std::process::id(),
                 nanos

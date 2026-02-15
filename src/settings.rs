@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 const SETTINGS_VERSION: u32 = 2;
 const DEFAULT_BASE_URL: &str = XAI_DEFAULT_BASE_URL;
 const DEFAULT_MODEL: &str = XAI_DEFAULT_MODEL;
-const KEYRING_SERVICE: &str = "grok-build";
+const KEYRING_SERVICE: &str = "codetoad";
+const LEGACY_KEYRING_SERVICE: &str = "grok-build";
 const LEGACY_KEYRING_ACCOUNT: &str = "xai_api_key";
 const KEYRING_ACCOUNT_PREFIX: &str = "provider";
 
@@ -780,8 +781,25 @@ where
     Ok(())
 }
 
-fn keyring_entry(account: &str) -> std::result::Result<Entry, KeyringError> {
-    Entry::new(KEYRING_SERVICE, account)
+fn keyring_entry(service: &str, account: &str) -> std::result::Result<Entry, KeyringError> {
+    Entry::new(service, account)
+}
+
+fn keyring_entry_current(account: &str) -> std::result::Result<Entry, KeyringError> {
+    keyring_entry(KEYRING_SERVICE, account)
+}
+
+fn keyring_entry_legacy_service(account: &str) -> std::result::Result<Entry, KeyringError> {
+    keyring_entry(LEGACY_KEYRING_SERVICE, account)
+}
+
+fn read_keyring_password(service: &str, account: &str) -> Result<Option<String>> {
+    let entry = keyring_entry(service, account).context("Failed opening keychain entry")?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(err) => Err(anyhow::anyhow!(err).context("Failed loading API key from keychain")),
+    }
 }
 
 fn keyring_account_for(provider_id: &str) -> String {
@@ -791,16 +809,23 @@ fn keyring_account_for(provider_id: &str) -> String {
 
 fn store_api_key_in_keychain(provider_id: &str, api_key: &str) -> Result<()> {
     let account = keyring_account_for(provider_id);
-    let entry = keyring_entry(&account).context("Failed opening keychain entry")?;
+    let entry = keyring_entry_current(&account).context("Failed opening keychain entry")?;
     entry
         .set_password(api_key)
         .context("Failed storing API key in keychain")?;
 
     if normalize_provider_id(provider_id).as_deref() == Some("xai") {
         // Legacy account compatibility is best-effort; do not fail the primary save.
-        if let Ok(legacy) = keyring_entry(LEGACY_KEYRING_ACCOUNT) {
+        if let Ok(legacy) = keyring_entry_current(LEGACY_KEYRING_ACCOUNT) {
             let _ = legacy.set_password(api_key);
         }
+        if let Ok(legacy_service) = keyring_entry_legacy_service(LEGACY_KEYRING_ACCOUNT) {
+            let _ = legacy_service.set_password(api_key);
+        }
+    }
+    if let Ok(legacy_service_provider) = keyring_entry_legacy_service(&account) {
+        // Best-effort backfill for users migrating from the old service namespace.
+        let _ = legacy_service_provider.set_password(api_key);
     }
 
     Ok(())
@@ -823,20 +848,16 @@ fn keychain_has_api_key(provider_id: &str) -> bool {
 
 fn load_api_key_from_keychain(provider_id: &str) -> Result<Option<String>> {
     let account = keyring_account_for(provider_id);
-    let entry = keyring_entry(&account).context("Failed opening keychain entry")?;
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(err) => Err(anyhow::anyhow!(err).context("Failed loading API key from keychain")),
+    match read_keyring_password(KEYRING_SERVICE, &account)? {
+        Some(value) => Ok(Some(value)),
+        None => read_keyring_password(LEGACY_KEYRING_SERVICE, &account),
     }
 }
 
 fn load_legacy_api_key_from_keychain() -> Result<Option<String>> {
-    let entry = keyring_entry(LEGACY_KEYRING_ACCOUNT).context("Failed opening keychain entry")?;
-    match entry.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(err) => Err(anyhow::anyhow!(err).context("Failed loading API key from keychain")),
+    match read_keyring_password(KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT)? {
+        Some(value) => Ok(Some(value)),
+        None => read_keyring_password(LEGACY_KEYRING_SERVICE, LEGACY_KEYRING_ACCOUNT),
     }
 }
 

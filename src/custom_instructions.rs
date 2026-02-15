@@ -71,7 +71,7 @@ mod tests {
                 .expect("clock should be after epoch")
                 .as_nanos();
             let pid = std::process::id();
-            let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+            let path = std::env::temp_dir().join(format!("codetoad-{prefix}-{pid}-{nonce}"));
             fs::create_dir_all(&path).expect("create temp dir");
             Self { path }
         }

@@ -1,19 +1,19 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use crossterm::event::DisableMouseCapture;
-use crossterm::execute;
-use crossterm::terminal::disable_raw_mode;
-use grok_build::agent::Agent;
-use grok_build::app_context::AppContext;
-use grok_build::cli::{ApiKeyStorageArg, Cli, Commands, GitCommands};
-use grok_build::git_ops::{
+use codetoad::agent::Agent;
+use codetoad::app_context::AppContext;
+use codetoad::cli::{ApiKeyStorageArg, Cli, Commands, GitCommands};
+use codetoad::git_ops::{
     CommitAndPushEvent, CommitAndPushOptions, CommitAndPushOutcome, CommitAndPushStep,
     run_commit_and_push,
 };
-use grok_build::image_input::prepare_user_input;
-use grok_build::onboarding::run_first_time_setup;
-use grok_build::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
-use grok_build::ui::inline;
+use codetoad::image_input::prepare_user_input;
+use codetoad::onboarding::run_first_time_setup;
+use codetoad::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
+use codetoad::ui::inline;
+use crossterm::event::DisableMouseCapture;
+use crossterm::execute;
+use crossterm::terminal::disable_raw_mode;
 use std::io::{self, IsTerminal};
 
 #[tokio::main]

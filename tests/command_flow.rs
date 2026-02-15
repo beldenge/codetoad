@@ -1,14 +1,14 @@
 use anyhow::{Result, bail};
-use grok_build::agent::{Agent, AgentEvent, ConfirmationDecision};
-use grok_build::confirmation::ConfirmationOperation;
-use grok_build::grok_client::SearchMode;
-use grok_build::model_client::{ModelClient, StreamChunkHandler};
-use grok_build::protocol::{
+use codetoad::agent::{Agent, AgentEvent, ConfirmationDecision};
+use codetoad::confirmation::ConfirmationOperation;
+use codetoad::grok_client::SearchMode;
+use codetoad::model_client::{ModelClient, StreamChunkHandler};
+use codetoad::protocol::{
     ChatChoice, ChatCompletionMessage, ChatCompletionResponse, ChatCompletionStreamChoice,
     ChatCompletionStreamChunk, ChatCompletionStreamDelta, ChatCompletionToolCallDelta,
     ChatCompletionToolCallFunctionDelta, ChatMessage, ChatTool,
 };
-use grok_build::slash_commands::{
+use codetoad::slash_commands::{
     CommandGroup, ParsedSlashCommand, append_help_section, parse_slash_command,
 };
 use std::collections::VecDeque;
@@ -269,7 +269,7 @@ impl TempDir {
             .expect("clock after epoch")
             .as_nanos();
         let pid = std::process::id();
-        let path = std::env::temp_dir().join(format!("grok-build-{prefix}-{pid}-{nonce}"));
+        let path = std::env::temp_dir().join(format!("codetoad-{prefix}-{pid}-{nonce}"));
         std::fs::create_dir_all(&path).expect("create temp dir");
         Self { path }
     }

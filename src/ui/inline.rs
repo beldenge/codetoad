@@ -578,7 +578,7 @@ fn is_direct_command(input: &str) -> bool {
 }
 
 fn help_text() -> String {
-    let mut output = String::from("Grok Build Help:\n\n");
+    let mut output = String::from("CodeToad Help:\n\n");
     append_help_section(&mut output, "Built-in Commands", CommandGroup::BuiltIn);
     output.push('\n');
     append_help_section(&mut output, "Provider Commands", CommandGroup::Provider);

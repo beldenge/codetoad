@@ -1,6 +1,7 @@
-# grok-build (Rust)
+# codetoad (Rust)
 
-`grok-build` is a Rust port of the core `grok-cli` coding-agent workflow.
+`codetoad` is your friendly code toad, ready to hop to coding tasks.
+It is a Rust port of the core `grok-cli` coding-agent workflow.
 
 It provides:
 - Provider-aware model client behavior:
@@ -120,7 +121,7 @@ cargo run -- --api-key <KEY> git commit-and-push
 With custom directory/base-url/model:
 
 ```bash
-cargo run -- --directory D:\\dev\\gb\\grok-build --base-url https://api.x.ai/v1 --model grok-code-fast-1
+cargo run -- --directory <project-root> --base-url https://api.x.ai/v1 --model grok-code-fast-1
 ```
 
 ## CLI Options
@@ -216,13 +217,14 @@ cargo run -- --api-key-storage plaintext --api-key <KEY>
 ```
 
 Inspect/remove in OS store (advanced):
-- Windows: Credential Manager -> Windows Credentials -> Generic Credentials (search for `grok-build` and account `provider_<id>`).
+- Windows: Credential Manager -> Windows Credentials -> Generic Credentials (search for `codetoad` and account `provider_<id>`).
 - macOS:
-  - read: `security find-generic-password -s grok-build -a provider_xai -w`
-  - delete: `security delete-generic-password -s grok-build -a provider_xai`
+  - read: `security find-generic-password -s codetoad -a provider_xai -w`
+  - delete: `security delete-generic-password -s codetoad -a provider_xai`
 - Linux (Secret Service/libsecret):
-  - read: `secret-tool lookup service grok-build username provider_xai`
-  - clear: use your keyring UI (for example Seahorse) and remove the `grok-build` entry.
+  - read: `secret-tool lookup service codetoad username provider_xai`
+  - clear: use your keyring UI (for example Seahorse) and remove the `codetoad` entry.
+- Compatibility note: `codetoad` also reads legacy credentials saved under the previous `grok-build` keychain service name.
 
 Project settings are stored in `.grok/settings.json` and include:
 - `model`
@@ -241,3 +243,4 @@ Optional secure-storage integration test (writes/reads a temporary provider key 
 ```bash
 cargo test --features keychain-integration-tests --test settings_keychain
 ```
+

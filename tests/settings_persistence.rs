@@ -1,5 +1,5 @@
 use anyhow::Result;
-use grok_build::settings::{ApiKeyStorageMode, SettingsManager};
+use codetoad::settings::{ApiKeyStorageMode, SettingsManager};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -87,7 +87,7 @@ impl TempDir {
             .expect("clock")
             .as_nanos();
         path.push(format!(
-            "grok-build-{}-{}-{}",
+            "codetoad-{}-{}-{}",
             prefix,
             std::process::id(),
             nanos

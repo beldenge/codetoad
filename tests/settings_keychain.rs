@@ -1,7 +1,7 @@
 #![cfg(feature = "keychain-integration-tests")]
 
 use anyhow::{Result, bail};
-use grok_build::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
+use codetoad::settings::{ApiKeySaveLocation, ApiKeyStorageMode, SettingsManager};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -73,7 +73,7 @@ impl TempDir {
     fn new(prefix: &str) -> Self {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "grok-build-{}-{}-{}",
+            "codetoad-{}-{}-{}",
             prefix,
             std::process::id(),
             unique_nonce()
