@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Blog on Code Toad</title>
+    <link>http://localhost:1313/tags/blog/</link>
+    <description>Recent content in Blog on Code Toad</description>
+    <generator>Hugo</generator>
+    <language>en-us</language>
+    <atom:link href="http://localhost:1313/tags/blog/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Let&#39;s hop to it!</title>
+      <link>http://localhost:1313/posts/hello/</link>
+      <pubDate>Mon, 01 Jan 0001 00:00:00 +0000</pubDate>
+      <guid>http://localhost:1313/posts/hello/</guid>
+      <description>&lt;p&gt;&lt;img src=&#34;http://localhost:1313/img/pixel-frog.jpg&#34; alt=&#34;Code Toad&#34;&gt;&#xA;Testing, 1, 2, 3&lt;/p&gt;</description>
+    </item>
+  </channel>
+</rss>
